@@ -916,10 +916,10 @@ const USERS_STATIC = [
 ];
 
 const MAISONS_DEFAULT = [
-  { id:'AUT', nom:'Autun',            ville:'Autun',             login:'MaisonAUT', couleur:'#d3692D', services:['rest'] },
+  { id:'AUT', nom:'Autun',            ville:'Autun',             login:'MaisonAUT', couleur:'#d3692D', services:['rest','loc'] },
   { id:'LMD', nom:'La Madeleine',     ville:'La Madeleine',      login:'MaisonLMD', couleur:'#8CADA1', services:['rest'] },
-  { id:'DOU', nom:'Douai',            ville:'Douai',             login:'MaisonDOU', couleur:'#284351', services:['rest'] },
-  { id:'CFD', nom:'Clermont-Ferrand', ville:'Clermont-Ferrand',  login:'MaisonCFD', couleur:'#E59E00', services:['rest'] },
+  { id:'DOU', nom:'Douai',            ville:'Douai',             login:'MaisonDOU', couleur:'#284351', services:['rest','loc'] },
+  { id:'CFD', nom:'Clermont-Ferrand', ville:'Clermont-Ferrand',  login:'MaisonCFD', couleur:'#E59E00', services:['rest','loc'] },
 ];
 
 const CARTE_DEFAULT = [
@@ -2434,16 +2434,24 @@ async function loadAdmin() {
   await loadMaisons();
   // Admin maisons table
   const body = document.getElementById('admin-maisons-body');
-  body.innerHTML = allMaisons.map(m => `
-    <tr>
+  const SVC_LABELS = { rest:'Restauration', loc:'Location', adh:'Adhésion' };
+  body.innerHTML = allMaisons.map(m => {
+    const svcs = m.services || [];
+    const checks = ['rest','loc','adh'].map(s => `
+      <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:12px;white-space:nowrap">
+        <input type="checkbox" data-maison="${m.id}" data-svc="${s}" ${svcs.includes(s)?'checked':''}
+               onchange="saveServicesMaison('${m.id}')">
+        ${SVC_LABELS[s]}
+      </label>`).join('');
+    return `<tr>
       <td><strong>${m.nom}</strong></td>
       <td>${m.ville||''}</td>
       <td><code>${m.login}</code></td>
-      <td>${(m.services||[]).join(', ')}</td>
+      <td><div style="display:flex;gap:8px;flex-wrap:wrap">${checks}</div></td>
       <td><span style="display:inline-block;width:20px;height:20px;border-radius:4px;background:${m.couleur||'#ccc'}"></span> ${m.couleur||''}</td>
       <td><button class="btn btn-danger btn-sm" onclick="deleteMaison('${m.id}')">Supprimer</button></td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 
   // MDP reset table
   const mdpBody = document.getElementById('admin-mdp-body');
@@ -2493,6 +2501,19 @@ async function createMaison() {
     await loadMaisons();
     populateMaisonSelector();
     loadAdmin();
+  } catch(e) { toast('Erreur: '+e.message,'error'); }
+}
+
+async function saveServicesMaison(maisId) {
+  const svcs = Array.from(
+    document.querySelectorAll(`input[data-maison="${maisId}"][data-svc]:checked`)
+  ).map(cb => cb.dataset.svc);
+  try {
+    await sbUpdate('dl_maisons', maisId, { services: svcs });
+    // Mettre à jour le cache local
+    const m = allMaisons.find(x => x.id === maisId);
+    if (m) m.services = svcs;
+    toast(`Services de ${allMaisons.find(x=>x.id===maisId)?.nom||maisId} mis à jour`, 'success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
 }
 
@@ -2764,6 +2785,25 @@ function onApptChange(el) {
   });
 }
 
+
+async function patchMaisonsServices() {
+  // Met à jour silencieusement AUT, DOU, CFD avec le service Location
+  const toUpdate = [
+    { id:'AUT', services:['rest','loc'] },
+    { id:'DOU', services:['rest','loc'] },
+    { id:'CFD', services:['rest','loc'] },
+  ];
+  for (const m of toUpdate) {
+    try {
+      const existing = await sbSelect('dl_maisons', `?id=eq.${m.id}&select=id,services&limit=1`);
+      if (!existing || !existing.length) continue;
+      const current = existing[0].services || [];
+      if (!current.includes('loc')) {
+        await sbUpdate('dl_maisons', m.id, { services: m.services });
+      }
+    } catch(e) { /* silencieux */ }
+  }
+}
 
 async function seedGardienSaisie() {
   // Chercher le résident GARDIEN en LMD
@@ -3316,6 +3356,7 @@ window.addEventListener('load', async () => {
       if (['admin','ops'].includes(currentUser.role)) {
         await seedLMDResidents();
         await seedGardienSaisie();
+        await patchMaisonsServices();
       }
     } catch(e) {
       sessionStorage.removeItem('dl_user');
