@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Daddy'Lodge</title>
+<title>DaddyLodge</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap');
 
@@ -602,15 +602,22 @@
         <div class="card">
           <div class="btn-group" style="margin-bottom:12px">
             <button class="btn btn-primary" onclick="openResidentModal()">+ Nouveau résident</button>
-            <input type="text" id="resident-search" placeholder="Rechercher…" oninput="filterResidents()" style="padding:7px 10px;border:1.5px solid var(--gris);border-radius:var(--radius-sm);font-size:13px;width:200px">
+            <button class="btn btn-secondary btn-sm" onclick="clearResidentFilters()">✕ Effacer filtres</button>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Nom</th><th>Prénom(s)</th><th>Civ.</th><th>Appt</th>
-                  <th>Catégorie</th><th>Nb rés.</th><th>Entrée</th><th>Sortie</th>
-                  <th>Loyer</th><th>Actions</th>
+                  <th>Nom<br><input type="text" class="hist-filter" id="rf-nom" placeholder="Filtre…" oninput="filterResidents()"></th>
+                  <th>Prénom(s)<br><input type="text" class="hist-filter" id="rf-prenom" placeholder="Filtre…" oninput="filterResidents()"></th>
+                  <th>Civ.<br><input type="text" class="hist-filter" id="rf-civilite" placeholder="…" oninput="filterResidents()" style="width:40px"></th>
+                  <th>Appt<br><input type="text" class="hist-filter" id="rf-appt" placeholder="…" oninput="filterResidents()" style="width:44px"></th>
+                  <th>Cat.<br><input type="text" class="hist-filter" id="rf-cat" placeholder="…" oninput="filterResidents()" style="width:36px"></th>
+                  <th>Nb rés.</th>
+                  <th>Entrée</th>
+                  <th>Sortie</th>
+                  <th>Loyer</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="residents-body">
@@ -1000,12 +1007,12 @@ async function initDB() {
         }).catch(()=>{});
       }
     }
-    // Carte
-    const carte = await sbSelect('dl_carte','?select=id&limit=1');
-    if (carte.length === 0) {
+    // Carte : seed uniquement pour LMD (les autres maisons partent vides)
+    const carteLMD = await sbSelect('dl_carte','?maison_id=eq.LMD&select=id&limit=1');
+    if (carteLMD.length === 0) {
       for (const c of CARTE_DEFAULT) {
         await sbInsert('dl_carte', {
-          maison_id: 'ALL',
+          maison_id: 'LMD',
           type_client: c.type, libelle: c.libelle,
           prix1: c.prix1, prix2: c.prix2, tva: c.tva
         }).catch(()=>{});
@@ -1306,11 +1313,27 @@ function renderResidents(data) {
 }
 
 function filterResidents() {
-  const q = document.getElementById('resident-search').value.toLowerCase();
+  const fNom    = (document.getElementById('rf-nom')?.value||'').toLowerCase();
+  const fPrenom = (document.getElementById('rf-prenom')?.value||'').toLowerCase();
+  const fCiv    = (document.getElementById('rf-civilite')?.value||'').toLowerCase();
+  const fAppt   = (document.getElementById('rf-appt')?.value||'').toLowerCase();
+  const fCat    = (document.getElementById('rf-cat')?.value||'').toLowerCase();
   const filtered = allResidents.filter(r =>
-    (r.nom||'').toLowerCase().includes(q) || (r.prenom||'').toLowerCase().includes(q)
+    (r.nom||'').toLowerCase().includes(fNom) &&
+    (r.prenom||'').toLowerCase().includes(fPrenom) &&
+    (r.civilite||'').toLowerCase().includes(fCiv) &&
+    (r.appt||'').toLowerCase().includes(fAppt) &&
+    (r.categorie||'').toLowerCase().includes(fCat)
   );
   renderResidents(filtered);
+}
+
+function clearResidentFilters() {
+  ['rf-nom','rf-prenom','rf-civilite','rf-appt','rf-cat'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  renderResidents(allResidents);
 }
 
 function openResidentModal(id=null) {
@@ -1445,11 +1468,11 @@ async function loadCarte() {
       cb.checked = joursPotage.includes(parseInt(cb.dataset.jour));
     });
 
-    const data = await sbSelect('dl_carte', `?maison_id=in.(${currentMaison.id},ALL)&order=type_client,libelle`);
-    allCarte = data.length > 0 ? data : CARTE_DEFAULT.map((c,i) => ({...c, id:i+1, maison_id:'ALL'}));
+    const data = await sbSelect('dl_carte', `?maison_id=eq.${currentMaison.id}&order=type_client,libelle`);
+    allCarte = data; // vide = normal pour les maisons sans carte configurée
     renderCarte();
   } catch(e) {
-    allCarte = CARTE_DEFAULT.map((c,i) => ({...c, id:i+1, maison_id:'ALL'}));
+    allCarte = [];
     document.getElementById('seuil-n').value = seuilN;
     renderCarte();
   }
@@ -1722,13 +1745,14 @@ function buildSaisieTable() {
   html += '</tbody>';
   table.innerHTML = html;
 
-  // Tab key navigation + focus selects content
-  const inputs = Array.from(table.querySelectorAll('.saisie-input, input[type=radio]'));
+  // Tab key navigation + focus selects content (skip disabled inputs)
+  const inputs = Array.from(table.querySelectorAll('.saisie-input, input[type=radio]'))
+                      .filter(i => !i.disabled);
   inputs.forEach((inp, idx) => {
     inp.addEventListener('keydown', e => {
       if (e.key === 'Tab') {
         e.preventDefault();
-        const next = inputs[idx+1];
+        const next = inputs[idx + (e.shiftKey ? -1 : 1)];
         if (next) next.focus();
       }
     });
@@ -2672,6 +2696,58 @@ function onApptChange(el) {
 }
 
 
+async function seedGardienSaisie() {
+  // Chercher le résident GARDIEN en LMD
+  const gardiens = await sbSelect('dl_residents', '?maison_id=eq.LMD&nom=eq.GARDIEN&limit=1').catch(()=>[]);
+  if (!gardiens || gardiens.length === 0) return;
+  const gardienId = gardiens[0].id;
+
+  // Vérifier si déjà seedé (chercher au moins une ligne)
+  const existing = await sbSelect('dl_repas', `?maison_id=eq.LMD&resident_id=eq.${gardienId}&limit=1`).catch(()=>[]);
+  if (existing && existing.length > 0) return;
+
+  // Générer les vendredis/samedis/dimanches sur 52 semaines (passés + futurs)
+  const today = new Date();
+  const start = new Date(2026, 0, 1);  // 1er janvier 2026
+  const end   = new Date(2026, 11, 31); // 31 décembre 2026
+
+  const rows = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    const dow = cur.getDay(); // 0=dim, 5=ven, 6=sam
+    let plateau = 0, obs = '';
+    if (dow === 5) { plateau = 1; obs = 'plateau à mettre au réfrigérateur pour le samedi soir'; }
+    else if (dow === 6) { plateau = 1; obs = 'repas pour le samedi midi'; }
+    else if (dow === 0) { plateau = 2; obs = '1 repas pour le dimanche midi + 1 plateau à mettre au réfrigérateur pour le dimanche soir'; }
+
+    if (plateau > 0) {
+      const d = fmtDateISO(cur);
+      const semaine = getISOWeek(cur);
+      const mois = cur.getMonth()+1;
+      const annee = cur.getFullYear();
+      rows.push({
+        maison_id: 'LMD', resident_id: gardienId,
+        date: d, semaine, mois, annee,
+        plateau_emporte: plateau,
+        observations: obs,
+        repas_salle:0, repas_invite:0, repas_ameliore:0,
+        plateau_porte:0, potage:0, repas_enfant:0,
+        conference:0, photocopies:0, lessive:0, absence_repas:0,
+        petite_portion:'non', boisson_eur:0,
+      });
+    }
+    cur.setDate(cur.getDate()+1);
+  }
+
+  // Insérer par batch
+  let inserted = 0;
+  for (const r of rows) {
+    await sbInsert('dl_repas', r).catch(()=>{}); // ignore duplicate
+    inserted++;
+  }
+  if (inserted > 0) toast(`Saisies Gardien initialisées (${inserted} lignes) ✓`, 'success');
+}
+
 async function seedLMDResidents() {
   const existing = await sbSelect('dl_residents', '?maison_id=eq.LMD&select=id&limit=1').catch(()=>[]);
   if (existing && existing.length > 0) return; // déjà chargé
@@ -3169,7 +3245,8 @@ window.addEventListener('load', async () => {
       await startApp();
       // Seed LMD résidents si besoin (run once)
       if (['admin','ops'].includes(currentUser.role)) {
-        seedLMDResidents();
+        await seedLMDResidents();
+        await seedGardienSaisie();
       }
     } catch(e) {
       sessionStorage.removeItem('dl_user');
