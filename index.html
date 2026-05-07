@@ -661,7 +661,7 @@
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Libellé</th><th>Prix (<N)</th><th>Prix (≥N)</th><th>TVA</th><th>HT (<N)</th><th>TVA (<N)</th><th>HT (≥N)</th><th>TVA (≥N)</th><th>Actions</th></tr>
+                  <tr><th>Libellé</th><th>Validité</th><th>Prix (<N)</th><th>Prix (≥N)</th><th>TVA</th><th>HT (<N)</th><th>TVA (<N)</th><th>HT (≥N)</th><th>TVA (≥N)</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="carte-resident-body"></tbody>
               </table>
@@ -671,7 +671,7 @@
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Libellé</th><th>Prix public</th><th>TVA</th><th>HT</th><th>TVA montant</th><th>Actions</th></tr>
+                  <tr><th>Libellé</th><th>Validité</th><th>Prix public</th><th>TVA</th><th>HT</th><th>TVA montant</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="carte-nonresident-body"></tbody>
               </table>
@@ -847,6 +847,14 @@
       <div class="form-group"><label>TVA (&lt;N)</label><input type="text" id="carte-tva1" readonly></div>
       <div class="form-group" id="carte-ht2-group"><label>HT (≥N)</label><input type="text" id="carte-ht2" readonly></div>
       <div class="form-group" id="carte-tva2-group"><label>TVA (≥N)</label><input type="text" id="carte-tva2" readonly></div>
+      <div class="form-group">
+        <label>Début de validité</label>
+        <input type="month" id="carte-debut" value="2026-01" title="Mois et année de début de validité">
+      </div>
+      <div class="form-group">
+        <label>Fin de validité</label>
+        <input type="month" id="carte-fin" value="2026-12" title="Mois et année de fin de validité">
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-carte')">Annuler</button>
@@ -1006,7 +1014,9 @@ async function initDB() {
         await sbInsert('dl_carte', {
           maison_id: 'LMD',
           type_client: c.type, libelle: c.libelle,
-          prix1: c.prix1, prix2: c.prix2, tva: c.tva
+          prix1: c.prix1, prix2: c.prix2, tva: c.tva,
+          mois_debut: new Date().getFullYear() + '-01',
+          mois_fin:   new Date().getFullYear() + '-12',
         }).catch(()=>{});
       }
     }
@@ -1474,11 +1484,15 @@ function renderCarte() {
   const resData = allCarte.filter(c => c.type_client === 'resident' || c.type === 'resident');
   const nrData  = allCarte.filter(c => c.type_client === 'nonresident' || c.type === 'nonresident');
 
+  const fmtMois = m => m ? m.replace('-', '/') : '—';
+
   document.getElementById('carte-resident-body').innerHTML = resData.map(c => {
     const { ht: ht1, tvaAmt: tv1 } = calcHT(c.prix1, c.tva);
     const { ht: ht2, tvaAmt: tv2 } = c.prix2 ? calcHT(c.prix2, c.tva) : {ht:'—',tvaAmt:'—'};
+    const validite = `${fmtMois(c.mois_debut)} → ${fmtMois(c.mois_fin)}`;
     return `<tr>
       <td>${c.libelle}</td>
+      <td style="font-size:11px;color:var(--gris-mid);white-space:nowrap">${validite}</td>
       <td>${fmt2(c.prix1)} €</td>
       <td>${c.prix2 ? fmt2(c.prix2)+' €' : '—'}</td>
       <td>${c.tva}%</td>
@@ -1491,12 +1505,14 @@ function renderCarte() {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
 
   document.getElementById('carte-nonresident-body').innerHTML = nrData.map(c => {
     const { ht, tvaAmt } = calcHT(c.prix1, c.tva);
+    const validite = `${fmtMois(c.mois_debut)} → ${fmtMois(c.mois_fin)}`;
     return `<tr>
       <td>${c.libelle}</td>
+      <td style="font-size:11px;color:var(--gris-mid);white-space:nowrap">${validite}</td>
       <td>${fmt2(c.prix1)} €</td>
       <td>${c.tva}%</td>
       <td>${ht} €</td><td>${tvaAmt} €</td>
@@ -1507,7 +1523,7 @@ function renderCarte() {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
 }
 
 async function saveSeuilN() {
@@ -1544,9 +1560,15 @@ function openCarteModal(id=null) {
       document.getElementById('carte-prix1').value = c.prix1;
       document.getElementById('carte-prix2').value = c.prix2||'';
       document.getElementById('carte-tva').value = c.tva;
+      document.getElementById('carte-debut').value = c.mois_debut || (new Date().getFullYear() + '-01');
+      document.getElementById('carte-fin').value   = c.mois_fin   || (new Date().getFullYear() + '-12');
       onCarteTypeChange();
       calcCarteHT();
     }
+  } else {
+    const y = new Date().getFullYear();
+    document.getElementById('carte-debut').value = y + '-01';
+    document.getElementById('carte-fin').value   = y + '-12';
   }
   openModal('modal-carte');
 }
@@ -1578,6 +1600,12 @@ function calcCarteHT() {
 }
 
 async function saveCarte() {
+  const debut = document.getElementById('carte-debut').value;
+  const fin   = document.getElementById('carte-fin').value;
+  if (debut && fin && debut > fin) {
+    toast('La date de début doit être antérieure à la date de fin','error'); return;
+  }
+  const y = new Date().getFullYear();
   const row = {
     maison_id: currentMaison.id,
     type_client: document.getElementById('carte-type').value,
@@ -1585,6 +1613,8 @@ async function saveCarte() {
     prix1: parseFloat(document.getElementById('carte-prix1').value)||0,
     prix2: parseFloat(document.getElementById('carte-prix2').value)||null,
     tva: parseFloat(document.getElementById('carte-tva').value)||0,
+    mois_debut: debut || (y + '-01'),
+    mois_fin:   fin   || (y + '-12'),
   };
   if (!row.libelle) { toast('Libellé obligatoire','error'); return; }
   const id = document.getElementById('carte-id').value;
@@ -2865,7 +2895,7 @@ async function generateChef() {
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Libellé</th><th>Prix (<N)</th><th>Prix (≥N)</th><th>TVA</th><th>HT (<N)</th><th>TVA (<N)</th><th>HT (≥N)</th><th>TVA (≥N)</th><th>Actions</th></tr>
+                  <tr><th>Libellé</th><th>Validité</th><th>Prix (<N)</th><th>Prix (≥N)</th><th>TVA</th><th>HT (<N)</th><th>TVA (<N)</th><th>HT (≥N)</th><th>TVA (≥N)</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="carte-resident-body"></tbody>
               </table>
@@ -2875,7 +2905,7 @@ async function generateChef() {
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Libellé</th><th>Prix public</th><th>TVA</th><th>HT</th><th>TVA montant</th><th>Actions</th></tr>
+                  <tr><th>Libellé</th><th>Validité</th><th>Prix public</th><th>TVA</th><th>HT</th><th>TVA montant</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="carte-nonresident-body"></tbody>
               </table>
@@ -3051,6 +3081,14 @@ async function generateChef() {
       <div class="form-group"><label>TVA (&lt;N)</label><input type="text" id="carte-tva1" readonly></div>
       <div class="form-group" id="carte-ht2-group"><label>HT (≥N)</label><input type="text" id="carte-ht2" readonly></div>
       <div class="form-group" id="carte-tva2-group"><label>TVA (≥N)</label><input type="text" id="carte-tva2" readonly></div>
+      <div class="form-group">
+        <label>Début de validité</label>
+        <input type="month" id="carte-debut" value="2026-01" title="Mois et année de début de validité">
+      </div>
+      <div class="form-group">
+        <label>Fin de validité</label>
+        <input type="month" id="carte-fin" value="2026-12" title="Mois et année de fin de validité">
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-carte')">Annuler</button>
@@ -3210,7 +3248,9 @@ async function initDB() {
         await sbInsert('dl_carte', {
           maison_id: 'LMD',
           type_client: c.type, libelle: c.libelle,
-          prix1: c.prix1, prix2: c.prix2, tva: c.tva
+          prix1: c.prix1, prix2: c.prix2, tva: c.tva,
+          mois_debut: new Date().getFullYear() + '-01',
+          mois_fin:   new Date().getFullYear() + '-12',
         }).catch(()=>{});
       }
     }
@@ -3678,11 +3718,15 @@ function renderCarte() {
   const resData = allCarte.filter(c => c.type_client === 'resident' || c.type === 'resident');
   const nrData  = allCarte.filter(c => c.type_client === 'nonresident' || c.type === 'nonresident');
 
+  const fmtMois = m => m ? m.replace('-', '/') : '—';
+
   document.getElementById('carte-resident-body').innerHTML = resData.map(c => {
     const { ht: ht1, tvaAmt: tv1 } = calcHT(c.prix1, c.tva);
     const { ht: ht2, tvaAmt: tv2 } = c.prix2 ? calcHT(c.prix2, c.tva) : {ht:'—',tvaAmt:'—'};
+    const validite = `${fmtMois(c.mois_debut)} → ${fmtMois(c.mois_fin)}`;
     return `<tr>
       <td>${c.libelle}</td>
+      <td style="font-size:11px;color:var(--gris-mid);white-space:nowrap">${validite}</td>
       <td>${fmt2(c.prix1)} €</td>
       <td>${c.prix2 ? fmt2(c.prix2)+' €' : '—'}</td>
       <td>${c.tva}%</td>
@@ -3695,12 +3739,14 @@ function renderCarte() {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
 
   document.getElementById('carte-nonresident-body').innerHTML = nrData.map(c => {
     const { ht, tvaAmt } = calcHT(c.prix1, c.tva);
+    const validite = `${fmtMois(c.mois_debut)} → ${fmtMois(c.mois_fin)}`;
     return `<tr>
       <td>${c.libelle}</td>
+      <td style="font-size:11px;color:var(--gris-mid);white-space:nowrap">${validite}</td>
       <td>${fmt2(c.prix1)} €</td>
       <td>${c.tva}%</td>
       <td>${ht} €</td><td>${tvaAmt} €</td>
@@ -3711,7 +3757,7 @@ function renderCarte() {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
 }
 
 async function saveSeuilN() {
@@ -3748,9 +3794,15 @@ function openCarteModal(id=null) {
       document.getElementById('carte-prix1').value = c.prix1;
       document.getElementById('carte-prix2').value = c.prix2||'';
       document.getElementById('carte-tva').value = c.tva;
+      document.getElementById('carte-debut').value = c.mois_debut || (new Date().getFullYear() + '-01');
+      document.getElementById('carte-fin').value   = c.mois_fin   || (new Date().getFullYear() + '-12');
       onCarteTypeChange();
       calcCarteHT();
     }
+  } else {
+    const y = new Date().getFullYear();
+    document.getElementById('carte-debut').value = y + '-01';
+    document.getElementById('carte-fin').value   = y + '-12';
   }
   openModal('modal-carte');
 }
@@ -3782,6 +3834,12 @@ function calcCarteHT() {
 }
 
 async function saveCarte() {
+  const debut = document.getElementById('carte-debut').value;
+  const fin   = document.getElementById('carte-fin').value;
+  if (debut && fin && debut > fin) {
+    toast('La date de début doit être antérieure à la date de fin','error'); return;
+  }
+  const y = new Date().getFullYear();
   const row = {
     maison_id: currentMaison.id,
     type_client: document.getElementById('carte-type').value,
@@ -3789,6 +3847,8 @@ async function saveCarte() {
     prix1: parseFloat(document.getElementById('carte-prix1').value)||0,
     prix2: parseFloat(document.getElementById('carte-prix2').value)||null,
     tva: parseFloat(document.getElementById('carte-tva').value)||0,
+    mois_debut: debut || (y + '-01'),
+    mois_fin:   fin   || (y + '-12'),
   };
   if (!row.libelle) { toast('Libellé obligatoire','error'); return; }
   const id = document.getElementById('carte-id').value;
@@ -5069,7 +5129,7 @@ async function generateChef() {
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Libellé</th><th>Prix (<N)</th><th>Prix (≥N)</th><th>TVA</th><th>HT (<N)</th><th>TVA (<N)</th><th>HT (≥N)</th><th>TVA (≥N)</th><th>Actions</th></tr>
+                  <tr><th>Libellé</th><th>Validité</th><th>Prix (<N)</th><th>Prix (≥N)</th><th>TVA</th><th>HT (<N)</th><th>TVA (<N)</th><th>HT (≥N)</th><th>TVA (≥N)</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="carte-resident-body"></tbody>
               </table>
@@ -5079,7 +5139,7 @@ async function generateChef() {
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Libellé</th><th>Prix public</th><th>TVA</th><th>HT</th><th>TVA montant</th><th>Actions</th></tr>
+                  <tr><th>Libellé</th><th>Validité</th><th>Prix public</th><th>TVA</th><th>HT</th><th>TVA montant</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="carte-nonresident-body"></tbody>
               </table>
@@ -5255,6 +5315,14 @@ async function generateChef() {
       <div class="form-group"><label>TVA (&lt;N)</label><input type="text" id="carte-tva1" readonly></div>
       <div class="form-group" id="carte-ht2-group"><label>HT (≥N)</label><input type="text" id="carte-ht2" readonly></div>
       <div class="form-group" id="carte-tva2-group"><label>TVA (≥N)</label><input type="text" id="carte-tva2" readonly></div>
+      <div class="form-group">
+        <label>Début de validité</label>
+        <input type="month" id="carte-debut" value="2026-01" title="Mois et année de début de validité">
+      </div>
+      <div class="form-group">
+        <label>Fin de validité</label>
+        <input type="month" id="carte-fin" value="2026-12" title="Mois et année de fin de validité">
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-carte')">Annuler</button>
@@ -5414,7 +5482,9 @@ async function initDB() {
         await sbInsert('dl_carte', {
           maison_id: 'LMD',
           type_client: c.type, libelle: c.libelle,
-          prix1: c.prix1, prix2: c.prix2, tva: c.tva
+          prix1: c.prix1, prix2: c.prix2, tva: c.tva,
+          mois_debut: new Date().getFullYear() + '-01',
+          mois_fin:   new Date().getFullYear() + '-12',
         }).catch(()=>{});
       }
     }
@@ -5882,11 +5952,15 @@ function renderCarte() {
   const resData = allCarte.filter(c => c.type_client === 'resident' || c.type === 'resident');
   const nrData  = allCarte.filter(c => c.type_client === 'nonresident' || c.type === 'nonresident');
 
+  const fmtMois = m => m ? m.replace('-', '/') : '—';
+
   document.getElementById('carte-resident-body').innerHTML = resData.map(c => {
     const { ht: ht1, tvaAmt: tv1 } = calcHT(c.prix1, c.tva);
     const { ht: ht2, tvaAmt: tv2 } = c.prix2 ? calcHT(c.prix2, c.tva) : {ht:'—',tvaAmt:'—'};
+    const validite = `${fmtMois(c.mois_debut)} → ${fmtMois(c.mois_fin)}`;
     return `<tr>
       <td>${c.libelle}</td>
+      <td style="font-size:11px;color:var(--gris-mid);white-space:nowrap">${validite}</td>
       <td>${fmt2(c.prix1)} €</td>
       <td>${c.prix2 ? fmt2(c.prix2)+' €' : '—'}</td>
       <td>${c.tva}%</td>
@@ -5899,12 +5973,14 @@ function renderCarte() {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
 
   document.getElementById('carte-nonresident-body').innerHTML = nrData.map(c => {
     const { ht, tvaAmt } = calcHT(c.prix1, c.tva);
+    const validite = `${fmtMois(c.mois_debut)} → ${fmtMois(c.mois_fin)}`;
     return `<tr>
       <td>${c.libelle}</td>
+      <td style="font-size:11px;color:var(--gris-mid);white-space:nowrap">${validite}</td>
       <td>${fmt2(c.prix1)} €</td>
       <td>${c.tva}%</td>
       <td>${ht} €</td><td>${tvaAmt} €</td>
@@ -5915,7 +5991,7 @@ function renderCarte() {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
 }
 
 async function saveSeuilN() {
@@ -5952,9 +6028,15 @@ function openCarteModal(id=null) {
       document.getElementById('carte-prix1').value = c.prix1;
       document.getElementById('carte-prix2').value = c.prix2||'';
       document.getElementById('carte-tva').value = c.tva;
+      document.getElementById('carte-debut').value = c.mois_debut || (new Date().getFullYear() + '-01');
+      document.getElementById('carte-fin').value   = c.mois_fin   || (new Date().getFullYear() + '-12');
       onCarteTypeChange();
       calcCarteHT();
     }
+  } else {
+    const y = new Date().getFullYear();
+    document.getElementById('carte-debut').value = y + '-01';
+    document.getElementById('carte-fin').value   = y + '-12';
   }
   openModal('modal-carte');
 }
@@ -5986,6 +6068,12 @@ function calcCarteHT() {
 }
 
 async function saveCarte() {
+  const debut = document.getElementById('carte-debut').value;
+  const fin   = document.getElementById('carte-fin').value;
+  if (debut && fin && debut > fin) {
+    toast('La date de début doit être antérieure à la date de fin','error'); return;
+  }
+  const y = new Date().getFullYear();
   const row = {
     maison_id: currentMaison.id,
     type_client: document.getElementById('carte-type').value,
@@ -5993,6 +6081,8 @@ async function saveCarte() {
     prix1: parseFloat(document.getElementById('carte-prix1').value)||0,
     prix2: parseFloat(document.getElementById('carte-prix2').value)||null,
     tva: parseFloat(document.getElementById('carte-tva').value)||0,
+    mois_debut: debut || (y + '-01'),
+    mois_fin:   fin   || (y + '-12'),
   };
   if (!row.libelle) { toast('Libellé obligatoire','error'); return; }
   const id = document.getElementById('carte-id').value;
@@ -7273,7 +7363,7 @@ async function generateChef() {
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Libellé</th><th>Prix (<N)</th><th>Prix (≥N)</th><th>TVA</th><th>HT (<N)</th><th>TVA (<N)</th><th>HT (≥N)</th><th>TVA (≥N)</th><th>Actions</th></tr>
+                  <tr><th>Libellé</th><th>Validité</th><th>Prix (<N)</th><th>Prix (≥N)</th><th>TVA</th><th>HT (<N)</th><th>TVA (<N)</th><th>HT (≥N)</th><th>TVA (≥N)</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="carte-resident-body"></tbody>
               </table>
@@ -7283,7 +7373,7 @@ async function generateChef() {
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Libellé</th><th>Prix public</th><th>TVA</th><th>HT</th><th>TVA montant</th><th>Actions</th></tr>
+                  <tr><th>Libellé</th><th>Validité</th><th>Prix public</th><th>TVA</th><th>HT</th><th>TVA montant</th><th>Actions</th></tr>
                 </thead>
                 <tbody id="carte-nonresident-body"></tbody>
               </table>
@@ -7459,6 +7549,14 @@ async function generateChef() {
       <div class="form-group"><label>TVA (&lt;N)</label><input type="text" id="carte-tva1" readonly></div>
       <div class="form-group" id="carte-ht2-group"><label>HT (≥N)</label><input type="text" id="carte-ht2" readonly></div>
       <div class="form-group" id="carte-tva2-group"><label>TVA (≥N)</label><input type="text" id="carte-tva2" readonly></div>
+      <div class="form-group">
+        <label>Début de validité</label>
+        <input type="month" id="carte-debut" value="2026-01" title="Mois et année de début de validité">
+      </div>
+      <div class="form-group">
+        <label>Fin de validité</label>
+        <input type="month" id="carte-fin" value="2026-12" title="Mois et année de fin de validité">
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('modal-carte')">Annuler</button>
@@ -7618,7 +7716,9 @@ async function initDB() {
         await sbInsert('dl_carte', {
           maison_id: 'LMD',
           type_client: c.type, libelle: c.libelle,
-          prix1: c.prix1, prix2: c.prix2, tva: c.tva
+          prix1: c.prix1, prix2: c.prix2, tva: c.tva,
+          mois_debut: new Date().getFullYear() + '-01',
+          mois_fin:   new Date().getFullYear() + '-12',
         }).catch(()=>{});
       }
     }
@@ -8086,11 +8186,15 @@ function renderCarte() {
   const resData = allCarte.filter(c => c.type_client === 'resident' || c.type === 'resident');
   const nrData  = allCarte.filter(c => c.type_client === 'nonresident' || c.type === 'nonresident');
 
+  const fmtMois = m => m ? m.replace('-', '/') : '—';
+
   document.getElementById('carte-resident-body').innerHTML = resData.map(c => {
     const { ht: ht1, tvaAmt: tv1 } = calcHT(c.prix1, c.tva);
     const { ht: ht2, tvaAmt: tv2 } = c.prix2 ? calcHT(c.prix2, c.tva) : {ht:'—',tvaAmt:'—'};
+    const validite = `${fmtMois(c.mois_debut)} → ${fmtMois(c.mois_fin)}`;
     return `<tr>
       <td>${c.libelle}</td>
+      <td style="font-size:11px;color:var(--gris-mid);white-space:nowrap">${validite}</td>
       <td>${fmt2(c.prix1)} €</td>
       <td>${c.prix2 ? fmt2(c.prix2)+' €' : '—'}</td>
       <td>${c.tva}%</td>
@@ -8103,12 +8207,14 @@ function renderCarte() {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="9" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
 
   document.getElementById('carte-nonresident-body').innerHTML = nrData.map(c => {
     const { ht, tvaAmt } = calcHT(c.prix1, c.tva);
+    const validite = `${fmtMois(c.mois_debut)} → ${fmtMois(c.mois_fin)}`;
     return `<tr>
       <td>${c.libelle}</td>
+      <td style="font-size:11px;color:var(--gris-mid);white-space:nowrap">${validite}</td>
       <td>${fmt2(c.prix1)} €</td>
       <td>${c.tva}%</td>
       <td>${ht} €</td><td>${tvaAmt} €</td>
@@ -8119,7 +8225,7 @@ function renderCarte() {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--gris-mid)">Aucune prestation</td></tr>';
 }
 
 async function saveSeuilN() {
@@ -8156,9 +8262,15 @@ function openCarteModal(id=null) {
       document.getElementById('carte-prix1').value = c.prix1;
       document.getElementById('carte-prix2').value = c.prix2||'';
       document.getElementById('carte-tva').value = c.tva;
+      document.getElementById('carte-debut').value = c.mois_debut || (new Date().getFullYear() + '-01');
+      document.getElementById('carte-fin').value   = c.mois_fin   || (new Date().getFullYear() + '-12');
       onCarteTypeChange();
       calcCarteHT();
     }
+  } else {
+    const y = new Date().getFullYear();
+    document.getElementById('carte-debut').value = y + '-01';
+    document.getElementById('carte-fin').value   = y + '-12';
   }
   openModal('modal-carte');
 }
@@ -8190,6 +8302,12 @@ function calcCarteHT() {
 }
 
 async function saveCarte() {
+  const debut = document.getElementById('carte-debut').value;
+  const fin   = document.getElementById('carte-fin').value;
+  if (debut && fin && debut > fin) {
+    toast('La date de début doit être antérieure à la date de fin','error'); return;
+  }
+  const y = new Date().getFullYear();
   const row = {
     maison_id: currentMaison.id,
     type_client: document.getElementById('carte-type').value,
@@ -8197,6 +8315,8 @@ async function saveCarte() {
     prix1: parseFloat(document.getElementById('carte-prix1').value)||0,
     prix2: parseFloat(document.getElementById('carte-prix2').value)||null,
     tva: parseFloat(document.getElementById('carte-tva').value)||0,
+    mois_debut: debut || (y + '-01'),
+    mois_fin:   fin   || (y + '-12'),
   };
   if (!row.libelle) { toast('Libellé obligatoire','error'); return; }
   const id = document.getElementById('carte-id').value;
