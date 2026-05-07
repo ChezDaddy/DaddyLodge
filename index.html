@@ -1613,9 +1613,10 @@ async function saveCarte() {
     prix1: parseFloat(document.getElementById('carte-prix1').value)||0,
     prix2: parseFloat(document.getElementById('carte-prix2').value)||null,
     tva: parseFloat(document.getElementById('carte-tva').value)||0,
-    mois_debut: debut || (y + '-01'),
-    mois_fin:   fin   || (y + '-12'),
   };
+  // mois_debut / mois_fin : à activer après ALTER TABLE dl_carte ADD COLUMN mois_debut varchar(7); ADD COLUMN mois_fin varchar(7);
+  // row.mois_debut = debut || (y + '-01');
+  // row.mois_fin   = fin   || (y + '-12');
   if (!row.libelle) { toast('Libellé obligatoire','error'); return; }
   const id = document.getElementById('carte-id').value;
   try {
@@ -2054,7 +2055,12 @@ async function generateMH() {
 
   try {
     // Load all residents active on this date
-    const residents = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    const residentsRaw = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    // GARDIEN en premier, puis tri alphabétique
+    const residents = [
+      ...residentsRaw.filter(r => r.nom === 'GARDIEN'),
+      ...residentsRaw.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
     // Load repas for this date
     const repas = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&date=eq.${dateStr}`);
 
@@ -2088,7 +2094,8 @@ async function generateMH() {
       <table class="print-table">
         <thead>
           <tr>
-            <th style="text-align:left;width:28%">Nom</th>
+            <th style="text-align:left;width:24%">Nom</th>
+            <th style="width:4%">P.P.</th>
             <th>Repas salle</th>
             <th>Repas invité</th>
             <th>Plateau porté</th>
@@ -2101,6 +2108,7 @@ async function generateMH() {
         <tbody>
           <tr style="background:#B7242B!important;color:white!important">
             <td class="name-col" style="color:white;font-weight:700;font-size:13px;background:#B7242B!important">TOTAL REPAS</td>
+            <td style="background:#B7242B!important"></td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totRepas}</td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totInvite}</td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totPorte}</td>
@@ -2119,14 +2127,17 @@ async function generateMH() {
                     || (r.observations||'').trim();
       if (!hasAny) continue;
       const nom = `${res.nom}${res.prenom ? ' '+res.prenom.split(' ')[0] : ''}`;
+      const ppNoir = r.petite_portion === 'oui';
+      const bld = v => v && v != 0 && v != '0' ? `<strong>${v}</strong>` : (v||0);
       html += `<tr>
-        <td class="name-col">${nom}</td>
-        <td>${r.repas_salle||0}</td>
-        <td>${r.repas_invite||0}</td>
-        <td>${r.plateau_porte||0}</td>
-        <td>${r.plateau_emporte||0}</td>
-        <td>${r.potage||0}</td>
-        <td>${r.boisson_eur ? fmt2(r.boisson_eur) : 0}</td>
+        <td class="name-col" style="font-size:11px">${nom}</td>
+        <td style="text-align:center;background:${ppNoir?'#111':''};color:${ppNoir?'white':''}">${ppNoir?'●':''}</td>
+        <td style="text-align:center">${bld(r.repas_salle||0)}</td>
+        <td style="text-align:center">${bld(r.repas_invite||0)}</td>
+        <td style="text-align:center">${bld(r.plateau_porte||0)}</td>
+        <td style="text-align:center">${bld(r.plateau_emporte||0)}</td>
+        <td style="text-align:center">${bld(r.potage||0)}</td>
+        <td style="text-align:center">${r.boisson_eur ? `<strong>${fmt2(r.boisson_eur)}</strong>` : 0}</td>
         <td style="text-align:left;font-size:10px">${r.observations||''}</td>
       </tr>`;
     }
@@ -2183,7 +2194,12 @@ async function generateChef() {
 
   try {
     const repas = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&date=gte.${lundi}&date=lte.${fmtDateISO(dimanche)}&order=date`);
-    const residents = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    const residentsRaw = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    // GARDIEN en premier, puis tri alphabétique
+    const residents = [
+      ...residentsRaw.filter(r => r.nom === 'GARDIEN'),
+      ...residentsRaw.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
 
     // Couverts par jour = repas_salle + repas_invite + plateau_porte + plateau_emporte
     const couvertsParJour = {};
@@ -2235,8 +2251,8 @@ async function generateChef() {
     let html = `<div class="print-doc" id="chef-print-content">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
-          <div class="print-title" style="font-size:16px;font-weight:700;color:#222">\${currentMaison ? 'Maison Daddy ' + currentMaison.nom.toUpperCase() : 'Maison Daddy'}</div>
-          <div class="print-subtitle" style="font-size:13px;color:#444">Feuille Chef — Semaine \${semaine}</div>
+          <div class="print-title" style="font-size:16px;font-weight:700;color:#222">Maison Daddy — ${maison.nom}</div>
+          <div class="print-subtitle" style="font-size:13px;color:#444">Feuille Chef — Semaine ${semaine}</div>
         </div>
         <div style="text-align:right;font-size:11px;color:#666">
           <div>Repas du <strong>${fmtDateLong(lundiDate)}</strong></div>
@@ -2283,7 +2299,7 @@ async function generateChef() {
         <tbody>`;
       for (const p of potageList) {
         const cells = joursPotageDate.map(jd => `<td style="text-align:center;font-weight:600">${p.vals[jd.dateStr]||0}</td>`).join('');
-        html += `<tr><td class="name-col">${p.nom}</td>${cells}</tr>`;
+        html += `<tr><td class="name-col" style="font-weight:400">${p.nom}</td>${cells}</tr>`;
       }
       const totalCells = joursPotageDate.map(jd => `<td style="text-align:center"><strong>${totauxJours[jd.dateStr]||0}</strong></td>`).join('');
       html += `<tr class="total-row"><td class="name-col">Total jour</td>${totalCells}</tr>`;
@@ -2295,7 +2311,7 @@ async function generateChef() {
         <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:2px solid ${maison.couleur};padding-bottom:4px">Informations complémentaires</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:200px">Envie de fruits</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:140px">Envie de fruits</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;NON</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
@@ -2649,10 +2665,14 @@ async function loadReguJour() {
 
   try {
     // Résidents actifs : date de sortie nulle OU postérieure à la date choisie
-    const residents = allResidents.filter(r => {
+    const residentsFiltered = allResidents.filter(r => {
       if (!r.date_sortie) return true;
       return r.date_sortie >= dateStr;
-    }).sort((a,b) => (a.nom||'').localeCompare(b.nom||''));
+    });
+    const residents = [
+      ...residentsFiltered.filter(r => r.nom === 'GARDIEN'),
+      ...residentsFiltered.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
 
     // Saisies existantes pour ce jour
     const repas = await sbSelect('dl_repas',
@@ -4188,9 +4208,10 @@ async function saveCarte() {
     prix1: parseFloat(document.getElementById('carte-prix1').value)||0,
     prix2: parseFloat(document.getElementById('carte-prix2').value)||null,
     tva: parseFloat(document.getElementById('carte-tva').value)||0,
-    mois_debut: debut || (y + '-01'),
-    mois_fin:   fin   || (y + '-12'),
   };
+  // mois_debut / mois_fin : à activer après ALTER TABLE dl_carte ADD COLUMN mois_debut varchar(7); ADD COLUMN mois_fin varchar(7);
+  // row.mois_debut = debut || (y + '-01');
+  // row.mois_fin   = fin   || (y + '-12');
   if (!row.libelle) { toast('Libellé obligatoire','error'); return; }
   const id = document.getElementById('carte-id').value;
   try {
@@ -4629,7 +4650,12 @@ async function generateMH() {
 
   try {
     // Load all residents active on this date
-    const residents = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    const residentsRaw = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    // GARDIEN en premier, puis tri alphabétique
+    const residents = [
+      ...residentsRaw.filter(r => r.nom === 'GARDIEN'),
+      ...residentsRaw.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
     // Load repas for this date
     const repas = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&date=eq.${dateStr}`);
 
@@ -4663,7 +4689,8 @@ async function generateMH() {
       <table class="print-table">
         <thead>
           <tr>
-            <th style="text-align:left;width:28%">Nom</th>
+            <th style="text-align:left;width:24%">Nom</th>
+            <th style="width:4%">P.P.</th>
             <th>Repas salle</th>
             <th>Repas invité</th>
             <th>Plateau porté</th>
@@ -4676,6 +4703,7 @@ async function generateMH() {
         <tbody>
           <tr style="background:#B7242B!important;color:white!important">
             <td class="name-col" style="color:white;font-weight:700;font-size:13px;background:#B7242B!important">TOTAL REPAS</td>
+            <td style="background:#B7242B!important"></td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totRepas}</td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totInvite}</td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totPorte}</td>
@@ -4694,14 +4722,17 @@ async function generateMH() {
                     || (r.observations||'').trim();
       if (!hasAny) continue;
       const nom = `${res.nom}${res.prenom ? ' '+res.prenom.split(' ')[0] : ''}`;
+      const ppNoir = r.petite_portion === 'oui';
+      const bld = v => v && v != 0 && v != '0' ? `<strong>${v}</strong>` : (v||0);
       html += `<tr>
-        <td class="name-col">${nom}</td>
-        <td>${r.repas_salle||0}</td>
-        <td>${r.repas_invite||0}</td>
-        <td>${r.plateau_porte||0}</td>
-        <td>${r.plateau_emporte||0}</td>
-        <td>${r.potage||0}</td>
-        <td>${r.boisson_eur ? fmt2(r.boisson_eur) : 0}</td>
+        <td class="name-col" style="font-size:11px">${nom}</td>
+        <td style="text-align:center;background:${ppNoir?'#111':''};color:${ppNoir?'white':''}">${ppNoir?'●':''}</td>
+        <td style="text-align:center">${bld(r.repas_salle||0)}</td>
+        <td style="text-align:center">${bld(r.repas_invite||0)}</td>
+        <td style="text-align:center">${bld(r.plateau_porte||0)}</td>
+        <td style="text-align:center">${bld(r.plateau_emporte||0)}</td>
+        <td style="text-align:center">${bld(r.potage||0)}</td>
+        <td style="text-align:center">${r.boisson_eur ? `<strong>${fmt2(r.boisson_eur)}</strong>` : 0}</td>
         <td style="text-align:left;font-size:10px">${r.observations||''}</td>
       </tr>`;
     }
@@ -4758,7 +4789,12 @@ async function generateChef() {
 
   try {
     const repas = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&date=gte.${lundi}&date=lte.${fmtDateISO(dimanche)}&order=date`);
-    const residents = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    const residentsRaw = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    // GARDIEN en premier, puis tri alphabétique
+    const residents = [
+      ...residentsRaw.filter(r => r.nom === 'GARDIEN'),
+      ...residentsRaw.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
 
     // Couverts par jour = repas_salle + repas_invite + plateau_porte + plateau_emporte
     const couvertsParJour = {};
@@ -4810,8 +4846,8 @@ async function generateChef() {
     let html = `<div class="print-doc" id="chef-print-content">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
-          <div class="print-title" style="font-size:16px;font-weight:700;color:#222">\${currentMaison ? 'Maison Daddy ' + currentMaison.nom.toUpperCase() : 'Maison Daddy'}</div>
-          <div class="print-subtitle" style="font-size:13px;color:#444">Feuille Chef — Semaine \${semaine}</div>
+          <div class="print-title" style="font-size:16px;font-weight:700;color:#222">Maison Daddy — ${maison.nom}</div>
+          <div class="print-subtitle" style="font-size:13px;color:#444">Feuille Chef — Semaine ${semaine}</div>
         </div>
         <div style="text-align:right;font-size:11px;color:#666">
           <div>Repas du <strong>${fmtDateLong(lundiDate)}</strong></div>
@@ -4858,7 +4894,7 @@ async function generateChef() {
         <tbody>`;
       for (const p of potageList) {
         const cells = joursPotageDate.map(jd => `<td style="text-align:center;font-weight:600">${p.vals[jd.dateStr]||0}</td>`).join('');
-        html += `<tr><td class="name-col">${p.nom}</td>${cells}</tr>`;
+        html += `<tr><td class="name-col" style="font-weight:400">${p.nom}</td>${cells}</tr>`;
       }
       const totalCells = joursPotageDate.map(jd => `<td style="text-align:center"><strong>${totauxJours[jd.dateStr]||0}</strong></td>`).join('');
       html += `<tr class="total-row"><td class="name-col">Total jour</td>${totalCells}</tr>`;
@@ -4870,7 +4906,7 @@ async function generateChef() {
         <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:2px solid ${maison.couleur};padding-bottom:4px">Informations complémentaires</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:200px">Envie de fruits</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:140px">Envie de fruits</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;NON</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
@@ -5224,10 +5260,14 @@ async function loadReguJour() {
 
   try {
     // Résidents actifs : date de sortie nulle OU postérieure à la date choisie
-    const residents = allResidents.filter(r => {
+    const residentsFiltered = allResidents.filter(r => {
       if (!r.date_sortie) return true;
       return r.date_sortie >= dateStr;
-    }).sort((a,b) => (a.nom||'').localeCompare(b.nom||''));
+    });
+    const residents = [
+      ...residentsFiltered.filter(r => r.nom === 'GARDIEN'),
+      ...residentsFiltered.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
 
     // Saisies existantes pour ce jour
     const repas = await sbSelect('dl_repas',
@@ -6763,9 +6803,10 @@ async function saveCarte() {
     prix1: parseFloat(document.getElementById('carte-prix1').value)||0,
     prix2: parseFloat(document.getElementById('carte-prix2').value)||null,
     tva: parseFloat(document.getElementById('carte-tva').value)||0,
-    mois_debut: debut || (y + '-01'),
-    mois_fin:   fin   || (y + '-12'),
   };
+  // mois_debut / mois_fin : à activer après ALTER TABLE dl_carte ADD COLUMN mois_debut varchar(7); ADD COLUMN mois_fin varchar(7);
+  // row.mois_debut = debut || (y + '-01');
+  // row.mois_fin   = fin   || (y + '-12');
   if (!row.libelle) { toast('Libellé obligatoire','error'); return; }
   const id = document.getElementById('carte-id').value;
   try {
@@ -7204,7 +7245,12 @@ async function generateMH() {
 
   try {
     // Load all residents active on this date
-    const residents = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    const residentsRaw = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    // GARDIEN en premier, puis tri alphabétique
+    const residents = [
+      ...residentsRaw.filter(r => r.nom === 'GARDIEN'),
+      ...residentsRaw.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
     // Load repas for this date
     const repas = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&date=eq.${dateStr}`);
 
@@ -7238,7 +7284,8 @@ async function generateMH() {
       <table class="print-table">
         <thead>
           <tr>
-            <th style="text-align:left;width:28%">Nom</th>
+            <th style="text-align:left;width:24%">Nom</th>
+            <th style="width:4%">P.P.</th>
             <th>Repas salle</th>
             <th>Repas invité</th>
             <th>Plateau porté</th>
@@ -7251,6 +7298,7 @@ async function generateMH() {
         <tbody>
           <tr style="background:#B7242B!important;color:white!important">
             <td class="name-col" style="color:white;font-weight:700;font-size:13px;background:#B7242B!important">TOTAL REPAS</td>
+            <td style="background:#B7242B!important"></td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totRepas}</td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totInvite}</td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totPorte}</td>
@@ -7269,14 +7317,17 @@ async function generateMH() {
                     || (r.observations||'').trim();
       if (!hasAny) continue;
       const nom = `${res.nom}${res.prenom ? ' '+res.prenom.split(' ')[0] : ''}`;
+      const ppNoir = r.petite_portion === 'oui';
+      const bld = v => v && v != 0 && v != '0' ? `<strong>${v}</strong>` : (v||0);
       html += `<tr>
-        <td class="name-col">${nom}</td>
-        <td>${r.repas_salle||0}</td>
-        <td>${r.repas_invite||0}</td>
-        <td>${r.plateau_porte||0}</td>
-        <td>${r.plateau_emporte||0}</td>
-        <td>${r.potage||0}</td>
-        <td>${r.boisson_eur ? fmt2(r.boisson_eur) : 0}</td>
+        <td class="name-col" style="font-size:11px">${nom}</td>
+        <td style="text-align:center;background:${ppNoir?'#111':''};color:${ppNoir?'white':''}">${ppNoir?'●':''}</td>
+        <td style="text-align:center">${bld(r.repas_salle||0)}</td>
+        <td style="text-align:center">${bld(r.repas_invite||0)}</td>
+        <td style="text-align:center">${bld(r.plateau_porte||0)}</td>
+        <td style="text-align:center">${bld(r.plateau_emporte||0)}</td>
+        <td style="text-align:center">${bld(r.potage||0)}</td>
+        <td style="text-align:center">${r.boisson_eur ? `<strong>${fmt2(r.boisson_eur)}</strong>` : 0}</td>
         <td style="text-align:left;font-size:10px">${r.observations||''}</td>
       </tr>`;
     }
@@ -7333,7 +7384,12 @@ async function generateChef() {
 
   try {
     const repas = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&date=gte.${lundi}&date=lte.${fmtDateISO(dimanche)}&order=date`);
-    const residents = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    const residentsRaw = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    // GARDIEN en premier, puis tri alphabétique
+    const residents = [
+      ...residentsRaw.filter(r => r.nom === 'GARDIEN'),
+      ...residentsRaw.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
 
     // Couverts par jour = repas_salle + repas_invite + plateau_porte + plateau_emporte
     const couvertsParJour = {};
@@ -7385,8 +7441,8 @@ async function generateChef() {
     let html = `<div class="print-doc" id="chef-print-content">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
-          <div class="print-title" style="font-size:16px;font-weight:700;color:#222">\${currentMaison ? 'Maison Daddy ' + currentMaison.nom.toUpperCase() : 'Maison Daddy'}</div>
-          <div class="print-subtitle" style="font-size:13px;color:#444">Feuille Chef — Semaine \${semaine}</div>
+          <div class="print-title" style="font-size:16px;font-weight:700;color:#222">Maison Daddy — ${maison.nom}</div>
+          <div class="print-subtitle" style="font-size:13px;color:#444">Feuille Chef — Semaine ${semaine}</div>
         </div>
         <div style="text-align:right;font-size:11px;color:#666">
           <div>Repas du <strong>${fmtDateLong(lundiDate)}</strong></div>
@@ -7433,7 +7489,7 @@ async function generateChef() {
         <tbody>`;
       for (const p of potageList) {
         const cells = joursPotageDate.map(jd => `<td style="text-align:center;font-weight:600">${p.vals[jd.dateStr]||0}</td>`).join('');
-        html += `<tr><td class="name-col">${p.nom}</td>${cells}</tr>`;
+        html += `<tr><td class="name-col" style="font-weight:400">${p.nom}</td>${cells}</tr>`;
       }
       const totalCells = joursPotageDate.map(jd => `<td style="text-align:center"><strong>${totauxJours[jd.dateStr]||0}</strong></td>`).join('');
       html += `<tr class="total-row"><td class="name-col">Total jour</td>${totalCells}</tr>`;
@@ -7445,7 +7501,7 @@ async function generateChef() {
         <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:2px solid ${maison.couleur};padding-bottom:4px">Informations complémentaires</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:200px">Envie de fruits</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:140px">Envie de fruits</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;NON</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
@@ -7799,10 +7855,14 @@ async function loadReguJour() {
 
   try {
     // Résidents actifs : date de sortie nulle OU postérieure à la date choisie
-    const residents = allResidents.filter(r => {
+    const residentsFiltered = allResidents.filter(r => {
       if (!r.date_sortie) return true;
       return r.date_sortie >= dateStr;
-    }).sort((a,b) => (a.nom||'').localeCompare(b.nom||''));
+    });
+    const residents = [
+      ...residentsFiltered.filter(r => r.nom === 'GARDIEN'),
+      ...residentsFiltered.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
 
     // Saisies existantes pour ce jour
     const repas = await sbSelect('dl_repas',
@@ -9338,9 +9398,10 @@ async function saveCarte() {
     prix1: parseFloat(document.getElementById('carte-prix1').value)||0,
     prix2: parseFloat(document.getElementById('carte-prix2').value)||null,
     tva: parseFloat(document.getElementById('carte-tva').value)||0,
-    mois_debut: debut || (y + '-01'),
-    mois_fin:   fin   || (y + '-12'),
   };
+  // mois_debut / mois_fin : à activer après ALTER TABLE dl_carte ADD COLUMN mois_debut varchar(7); ADD COLUMN mois_fin varchar(7);
+  // row.mois_debut = debut || (y + '-01');
+  // row.mois_fin   = fin   || (y + '-12');
   if (!row.libelle) { toast('Libellé obligatoire','error'); return; }
   const id = document.getElementById('carte-id').value;
   try {
@@ -9779,7 +9840,12 @@ async function generateMH() {
 
   try {
     // Load all residents active on this date
-    const residents = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    const residentsRaw = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    // GARDIEN en premier, puis tri alphabétique
+    const residents = [
+      ...residentsRaw.filter(r => r.nom === 'GARDIEN'),
+      ...residentsRaw.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
     // Load repas for this date
     const repas = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&date=eq.${dateStr}`);
 
@@ -9813,7 +9879,8 @@ async function generateMH() {
       <table class="print-table">
         <thead>
           <tr>
-            <th style="text-align:left;width:28%">Nom</th>
+            <th style="text-align:left;width:24%">Nom</th>
+            <th style="width:4%">P.P.</th>
             <th>Repas salle</th>
             <th>Repas invité</th>
             <th>Plateau porté</th>
@@ -9826,6 +9893,7 @@ async function generateMH() {
         <tbody>
           <tr style="background:#B7242B!important;color:white!important">
             <td class="name-col" style="color:white;font-weight:700;font-size:13px;background:#B7242B!important">TOTAL REPAS</td>
+            <td style="background:#B7242B!important"></td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totRepas}</td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totInvite}</td>
             <td style="color:white;font-weight:700;font-size:14px;background:#B7242B!important">${totPorte}</td>
@@ -9844,14 +9912,17 @@ async function generateMH() {
                     || (r.observations||'').trim();
       if (!hasAny) continue;
       const nom = `${res.nom}${res.prenom ? ' '+res.prenom.split(' ')[0] : ''}`;
+      const ppNoir = r.petite_portion === 'oui';
+      const bld = v => v && v != 0 && v != '0' ? `<strong>${v}</strong>` : (v||0);
       html += `<tr>
-        <td class="name-col">${nom}</td>
-        <td>${r.repas_salle||0}</td>
-        <td>${r.repas_invite||0}</td>
-        <td>${r.plateau_porte||0}</td>
-        <td>${r.plateau_emporte||0}</td>
-        <td>${r.potage||0}</td>
-        <td>${r.boisson_eur ? fmt2(r.boisson_eur) : 0}</td>
+        <td class="name-col" style="font-size:11px">${nom}</td>
+        <td style="text-align:center;background:${ppNoir?'#111':''};color:${ppNoir?'white':''}">${ppNoir?'●':''}</td>
+        <td style="text-align:center">${bld(r.repas_salle||0)}</td>
+        <td style="text-align:center">${bld(r.repas_invite||0)}</td>
+        <td style="text-align:center">${bld(r.plateau_porte||0)}</td>
+        <td style="text-align:center">${bld(r.plateau_emporte||0)}</td>
+        <td style="text-align:center">${bld(r.potage||0)}</td>
+        <td style="text-align:center">${r.boisson_eur ? `<strong>${fmt2(r.boisson_eur)}</strong>` : 0}</td>
         <td style="text-align:left;font-size:10px">${r.observations||''}</td>
       </tr>`;
     }
@@ -9908,7 +9979,12 @@ async function generateChef() {
 
   try {
     const repas = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&date=gte.${lundi}&date=lte.${fmtDateISO(dimanche)}&order=date`);
-    const residents = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    const residentsRaw = await sbSelect('dl_residents', `?maison_id=eq.${currentMaison.id}&order=nom`);
+    // GARDIEN en premier, puis tri alphabétique
+    const residents = [
+      ...residentsRaw.filter(r => r.nom === 'GARDIEN'),
+      ...residentsRaw.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
 
     // Couverts par jour = repas_salle + repas_invite + plateau_porte + plateau_emporte
     const couvertsParJour = {};
@@ -9960,8 +10036,8 @@ async function generateChef() {
     let html = `<div class="print-doc" id="chef-print-content">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
-          <div class="print-title" style="font-size:16px;font-weight:700;color:#222">\${currentMaison ? 'Maison Daddy ' + currentMaison.nom.toUpperCase() : 'Maison Daddy'}</div>
-          <div class="print-subtitle" style="font-size:13px;color:#444">Feuille Chef — Semaine \${semaine}</div>
+          <div class="print-title" style="font-size:16px;font-weight:700;color:#222">Maison Daddy — ${maison.nom}</div>
+          <div class="print-subtitle" style="font-size:13px;color:#444">Feuille Chef — Semaine ${semaine}</div>
         </div>
         <div style="text-align:right;font-size:11px;color:#666">
           <div>Repas du <strong>${fmtDateLong(lundiDate)}</strong></div>
@@ -10008,7 +10084,7 @@ async function generateChef() {
         <tbody>`;
       for (const p of potageList) {
         const cells = joursPotageDate.map(jd => `<td style="text-align:center;font-weight:600">${p.vals[jd.dateStr]||0}</td>`).join('');
-        html += `<tr><td class="name-col">${p.nom}</td>${cells}</tr>`;
+        html += `<tr><td class="name-col" style="font-weight:400">${p.nom}</td>${cells}</tr>`;
       }
       const totalCells = joursPotageDate.map(jd => `<td style="text-align:center"><strong>${totauxJours[jd.dateStr]||0}</strong></td>`).join('');
       html += `<tr class="total-row"><td class="name-col">Total jour</td>${totalCells}</tr>`;
@@ -10020,7 +10096,7 @@ async function generateChef() {
         <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:2px solid ${maison.couleur};padding-bottom:4px">Informations complémentaires</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:200px">Envie de fruits</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:140px">Envie de fruits</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;NON</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
@@ -10374,10 +10450,14 @@ async function loadReguJour() {
 
   try {
     // Résidents actifs : date de sortie nulle OU postérieure à la date choisie
-    const residents = allResidents.filter(r => {
+    const residentsFiltered = allResidents.filter(r => {
       if (!r.date_sortie) return true;
       return r.date_sortie >= dateStr;
-    }).sort((a,b) => (a.nom||'').localeCompare(b.nom||''));
+    });
+    const residents = [
+      ...residentsFiltered.filter(r => r.nom === 'GARDIEN'),
+      ...residentsFiltered.filter(r => r.nom !== 'GARDIEN').sort((a,b) => (a.nom||'').localeCompare(b.nom||''))
+    ];
 
     // Saisies existantes pour ce jour
     const repas = await sbSelect('dl_repas',
