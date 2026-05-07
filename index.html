@@ -465,9 +465,9 @@
                   <th>Appt<br><input type="text" class="hist-filter" data-col="2" placeholder="Filtre…"></th>
                   <th>Date<br><input type="text" class="hist-filter" data-col="3" placeholder="jj/mm"></th>
                   <th>Jour sem.</th>
-                  <th>Repas salle</th><th>Invité</th><th>Amélioré</th>
+                  <th>Repas salle</th><th>Invité</th>
                   <th>Plat. porté</th><th>Plat. emporté</th>
-                  <th>Potage</th><th>Enfant</th>
+                  <th>Potage</th>
                   <th>P. portion</th><th>Boisson €</th><th>Observations</th>
                   <th>Semaine</th><th>Mois</th><th>Actions</th>
                 </tr>
@@ -1269,7 +1269,8 @@ function fmtDateLong(d) {
 
 function fmtDateMH(d) {
   const dt = typeof d === 'string' ? new Date(d) : d;
-  return `${JOURS[(dt.getDay()+6)%7]} ${dt.getDate()} ${MOIS_LONG[dt.getMonth()]} ${dt.getFullYear()}`;
+  const sem = getISOWeek(dt);
+  return `${JOURS[(dt.getDay()+6)%7]} ${dt.getDate()} ${MOIS_LONG[dt.getMonth()]} ${dt.getFullYear()} (S${sem})`;
 }
 
 // =============================
@@ -1951,27 +1952,21 @@ async function loadHistorique() {
       return {
         _id: r.id, _resId: r.resident_id, _semaine: r.semaine, _annee: r.annee,
         cols: [
-          `S${r.semaine} ${r.annee}`,           // 0 semaine
-          `${res.nom||''} ${res.prenom||''}`.trim(), // 1 résident
-          res.appt||'',                           // 2 appt
-          dateFr,                                 // 3 date
-          jourSem,                                // 4 jour sem
-          r.repas_salle||0,                       // 5
-          r.repas_invite||0,                      // 6
-          r.repas_ameliore||0,                    // 7
-          r.plateau_porte||0,                     // 8
-          r.plateau_emporte||0,                   // 9
-          r.potage||0,                            // 10
-          r.repas_enfant||0,                      // 11
-          r.conference||0,                        // 12
-          r.photocopies||0,                       // 13
-          r.lessive||0,                           // 14
-          r.absence_repas||0,                     // 15
-          r.petite_portion||'non',                // 16
-          r.boisson_eur ? fmt2(r.boisson_eur) : '0.00', // 17
-          r.observations||'',                     // 18
-          `S${r.semaine}`,                        // 19
-          String(r.mois).padStart(2,'0'),         // 20
+          `S${r.semaine} ${r.annee}`,                    // 0 semaine
+          `${res.nom||''} ${res.prenom||''}`.trim(),      // 1 résident
+          res.appt||'',                                   // 2 appt
+          dateFr,                                         // 3 date
+          jourSem,                                        // 4 jour sem
+          r.repas_salle||0,                               // 5
+          r.repas_invite||0,                              // 6
+          r.plateau_porte||0,                             // 7
+          r.plateau_emporte||0,                           // 8
+          r.potage||0,                                    // 9
+          r.petite_portion === 'oui' ? 1 : '',            // 10 petite portion
+          r.boisson_eur ? fmt2(r.boisson_eur) : '0.00',  // 11
+          r.observations||'',                             // 12
+          `S${r.semaine}`,                                // 13
+          String(r.mois).padStart(2,'0'),                 // 14
         ]
       };
     });
@@ -1989,7 +1984,7 @@ async function loadHistorique() {
 }
 
 function renderHistorique() {
-  const NCOLS = 22;
+  const NCOLS = 17;
   const filters = Array.from(document.querySelectorAll('.hist-filter')).map(i => i.value.trim().toLowerCase());
 
   const filtered = histAllRows.filter(row => {
@@ -2008,11 +2003,12 @@ function renderHistorique() {
     <tr>
       ${row.cols.map((c,i) => {
         if (i===0) return `<td><span class="badge badge-blue">${c}</span></td>`;
-        if (i===16) return `<td>${c === 'oui' ? '<span class="badge badge-orange">Oui</span>' : 'Non'}</td>`;
-        if (i===18) return `<td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c}">${c}</td>`;
-        if ([5,6,7,8,9,10,11,12,13,14,15].includes(i)) {
+        if (i===10) return `<td style="text-align:center">${c === 1 ? '<span class="badge badge-orange">1</span>' : ''}</td>`;
+        if (i===12) return `<td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c}">${c}</td>`;
+        if ([5,6,7,8,9].includes(i)) {
           return `<td style="text-align:center;${c>0?'font-weight:600;color:var(--rouge)':''}">${c}</td>`;
         }
+        if (i===11) return `<td style="text-align:center;${parseFloat(c)>0?'font-weight:600;color:var(--rouge)':''}">${c}</td>`;
         return `<td>${c}</td>`;
       }).join('')}
       <td><button class="btn btn-danger btn-sm" title="Supprimer cette ligne" onclick="deleteSaisieRow(${row._id})">🗑</button></td>
@@ -2311,15 +2307,15 @@ async function generateChef() {
         <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:2px solid ${maison.couleur};padding-bottom:4px">Informations complémentaires</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:140px">Envie de fruits</td>
-            <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:100px">Envie de fruits</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;NON</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
           </tr>
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600">Envie de laitages</td>
-            <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;OUI</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:100px">Envie de laitages</td>
             <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;NON</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
           </tr>
           <tr>
@@ -3864,7 +3860,8 @@ function fmtDateLong(d) {
 
 function fmtDateMH(d) {
   const dt = typeof d === 'string' ? new Date(d) : d;
-  return `${JOURS[(dt.getDay()+6)%7]} ${dt.getDate()} ${MOIS_LONG[dt.getMonth()]} ${dt.getFullYear()}`;
+  const sem = getISOWeek(dt);
+  return `${JOURS[(dt.getDay()+6)%7]} ${dt.getDate()} ${MOIS_LONG[dt.getMonth()]} ${dt.getFullYear()} (S${sem})`;
 }
 
 // =============================
@@ -4546,27 +4543,21 @@ async function loadHistorique() {
       return {
         _id: r.id, _resId: r.resident_id, _semaine: r.semaine, _annee: r.annee,
         cols: [
-          `S${r.semaine} ${r.annee}`,           // 0 semaine
-          `${res.nom||''} ${res.prenom||''}`.trim(), // 1 résident
-          res.appt||'',                           // 2 appt
-          dateFr,                                 // 3 date
-          jourSem,                                // 4 jour sem
-          r.repas_salle||0,                       // 5
-          r.repas_invite||0,                      // 6
-          r.repas_ameliore||0,                    // 7
-          r.plateau_porte||0,                     // 8
-          r.plateau_emporte||0,                   // 9
-          r.potage||0,                            // 10
-          r.repas_enfant||0,                      // 11
-          r.conference||0,                        // 12
-          r.photocopies||0,                       // 13
-          r.lessive||0,                           // 14
-          r.absence_repas||0,                     // 15
-          r.petite_portion||'non',                // 16
-          r.boisson_eur ? fmt2(r.boisson_eur) : '0.00', // 17
-          r.observations||'',                     // 18
-          `S${r.semaine}`,                        // 19
-          String(r.mois).padStart(2,'0'),         // 20
+          `S${r.semaine} ${r.annee}`,                    // 0 semaine
+          `${res.nom||''} ${res.prenom||''}`.trim(),      // 1 résident
+          res.appt||'',                                   // 2 appt
+          dateFr,                                         // 3 date
+          jourSem,                                        // 4 jour sem
+          r.repas_salle||0,                               // 5
+          r.repas_invite||0,                              // 6
+          r.plateau_porte||0,                             // 7
+          r.plateau_emporte||0,                           // 8
+          r.potage||0,                                    // 9
+          r.petite_portion === 'oui' ? 1 : '',            // 10 petite portion
+          r.boisson_eur ? fmt2(r.boisson_eur) : '0.00',  // 11
+          r.observations||'',                             // 12
+          `S${r.semaine}`,                                // 13
+          String(r.mois).padStart(2,'0'),                 // 14
         ]
       };
     });
@@ -4584,7 +4575,7 @@ async function loadHistorique() {
 }
 
 function renderHistorique() {
-  const NCOLS = 22;
+  const NCOLS = 17;
   const filters = Array.from(document.querySelectorAll('.hist-filter')).map(i => i.value.trim().toLowerCase());
 
   const filtered = histAllRows.filter(row => {
@@ -4603,11 +4594,12 @@ function renderHistorique() {
     <tr>
       ${row.cols.map((c,i) => {
         if (i===0) return `<td><span class="badge badge-blue">${c}</span></td>`;
-        if (i===16) return `<td>${c === 'oui' ? '<span class="badge badge-orange">Oui</span>' : 'Non'}</td>`;
-        if (i===18) return `<td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c}">${c}</td>`;
-        if ([5,6,7,8,9,10,11,12,13,14,15].includes(i)) {
+        if (i===10) return `<td style="text-align:center">${c === 1 ? '<span class="badge badge-orange">1</span>' : ''}</td>`;
+        if (i===12) return `<td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c}">${c}</td>`;
+        if ([5,6,7,8,9].includes(i)) {
           return `<td style="text-align:center;${c>0?'font-weight:600;color:var(--rouge)':''}">${c}</td>`;
         }
+        if (i===11) return `<td style="text-align:center;${parseFloat(c)>0?'font-weight:600;color:var(--rouge)':''}">${c}</td>`;
         return `<td>${c}</td>`;
       }).join('')}
       <td><button class="btn btn-danger btn-sm" title="Supprimer cette ligne" onclick="deleteSaisieRow(${row._id})">🗑</button></td>
@@ -4906,15 +4898,15 @@ async function generateChef() {
         <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:2px solid ${maison.couleur};padding-bottom:4px">Informations complémentaires</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:140px">Envie de fruits</td>
-            <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:100px">Envie de fruits</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;NON</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
           </tr>
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600">Envie de laitages</td>
-            <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;OUI</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:100px">Envie de laitages</td>
             <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;NON</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
           </tr>
           <tr>
@@ -6459,7 +6451,8 @@ function fmtDateLong(d) {
 
 function fmtDateMH(d) {
   const dt = typeof d === 'string' ? new Date(d) : d;
-  return `${JOURS[(dt.getDay()+6)%7]} ${dt.getDate()} ${MOIS_LONG[dt.getMonth()]} ${dt.getFullYear()}`;
+  const sem = getISOWeek(dt);
+  return `${JOURS[(dt.getDay()+6)%7]} ${dt.getDate()} ${MOIS_LONG[dt.getMonth()]} ${dt.getFullYear()} (S${sem})`;
 }
 
 // =============================
@@ -7141,27 +7134,21 @@ async function loadHistorique() {
       return {
         _id: r.id, _resId: r.resident_id, _semaine: r.semaine, _annee: r.annee,
         cols: [
-          `S${r.semaine} ${r.annee}`,           // 0 semaine
-          `${res.nom||''} ${res.prenom||''}`.trim(), // 1 résident
-          res.appt||'',                           // 2 appt
-          dateFr,                                 // 3 date
-          jourSem,                                // 4 jour sem
-          r.repas_salle||0,                       // 5
-          r.repas_invite||0,                      // 6
-          r.repas_ameliore||0,                    // 7
-          r.plateau_porte||0,                     // 8
-          r.plateau_emporte||0,                   // 9
-          r.potage||0,                            // 10
-          r.repas_enfant||0,                      // 11
-          r.conference||0,                        // 12
-          r.photocopies||0,                       // 13
-          r.lessive||0,                           // 14
-          r.absence_repas||0,                     // 15
-          r.petite_portion||'non',                // 16
-          r.boisson_eur ? fmt2(r.boisson_eur) : '0.00', // 17
-          r.observations||'',                     // 18
-          `S${r.semaine}`,                        // 19
-          String(r.mois).padStart(2,'0'),         // 20
+          `S${r.semaine} ${r.annee}`,                    // 0 semaine
+          `${res.nom||''} ${res.prenom||''}`.trim(),      // 1 résident
+          res.appt||'',                                   // 2 appt
+          dateFr,                                         // 3 date
+          jourSem,                                        // 4 jour sem
+          r.repas_salle||0,                               // 5
+          r.repas_invite||0,                              // 6
+          r.plateau_porte||0,                             // 7
+          r.plateau_emporte||0,                           // 8
+          r.potage||0,                                    // 9
+          r.petite_portion === 'oui' ? 1 : '',            // 10 petite portion
+          r.boisson_eur ? fmt2(r.boisson_eur) : '0.00',  // 11
+          r.observations||'',                             // 12
+          `S${r.semaine}`,                                // 13
+          String(r.mois).padStart(2,'0'),                 // 14
         ]
       };
     });
@@ -7179,7 +7166,7 @@ async function loadHistorique() {
 }
 
 function renderHistorique() {
-  const NCOLS = 22;
+  const NCOLS = 17;
   const filters = Array.from(document.querySelectorAll('.hist-filter')).map(i => i.value.trim().toLowerCase());
 
   const filtered = histAllRows.filter(row => {
@@ -7198,11 +7185,12 @@ function renderHistorique() {
     <tr>
       ${row.cols.map((c,i) => {
         if (i===0) return `<td><span class="badge badge-blue">${c}</span></td>`;
-        if (i===16) return `<td>${c === 'oui' ? '<span class="badge badge-orange">Oui</span>' : 'Non'}</td>`;
-        if (i===18) return `<td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c}">${c}</td>`;
-        if ([5,6,7,8,9,10,11,12,13,14,15].includes(i)) {
+        if (i===10) return `<td style="text-align:center">${c === 1 ? '<span class="badge badge-orange">1</span>' : ''}</td>`;
+        if (i===12) return `<td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c}">${c}</td>`;
+        if ([5,6,7,8,9].includes(i)) {
           return `<td style="text-align:center;${c>0?'font-weight:600;color:var(--rouge)':''}">${c}</td>`;
         }
+        if (i===11) return `<td style="text-align:center;${parseFloat(c)>0?'font-weight:600;color:var(--rouge)':''}">${c}</td>`;
         return `<td>${c}</td>`;
       }).join('')}
       <td><button class="btn btn-danger btn-sm" title="Supprimer cette ligne" onclick="deleteSaisieRow(${row._id})">🗑</button></td>
@@ -7501,15 +7489,15 @@ async function generateChef() {
         <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:2px solid ${maison.couleur};padding-bottom:4px">Informations complémentaires</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:140px">Envie de fruits</td>
-            <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:100px">Envie de fruits</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;NON</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
           </tr>
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600">Envie de laitages</td>
-            <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;OUI</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:100px">Envie de laitages</td>
             <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;NON</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
           </tr>
           <tr>
@@ -9054,7 +9042,8 @@ function fmtDateLong(d) {
 
 function fmtDateMH(d) {
   const dt = typeof d === 'string' ? new Date(d) : d;
-  return `${JOURS[(dt.getDay()+6)%7]} ${dt.getDate()} ${MOIS_LONG[dt.getMonth()]} ${dt.getFullYear()}`;
+  const sem = getISOWeek(dt);
+  return `${JOURS[(dt.getDay()+6)%7]} ${dt.getDate()} ${MOIS_LONG[dt.getMonth()]} ${dt.getFullYear()} (S${sem})`;
 }
 
 // =============================
@@ -9736,27 +9725,21 @@ async function loadHistorique() {
       return {
         _id: r.id, _resId: r.resident_id, _semaine: r.semaine, _annee: r.annee,
         cols: [
-          `S${r.semaine} ${r.annee}`,           // 0 semaine
-          `${res.nom||''} ${res.prenom||''}`.trim(), // 1 résident
-          res.appt||'',                           // 2 appt
-          dateFr,                                 // 3 date
-          jourSem,                                // 4 jour sem
-          r.repas_salle||0,                       // 5
-          r.repas_invite||0,                      // 6
-          r.repas_ameliore||0,                    // 7
-          r.plateau_porte||0,                     // 8
-          r.plateau_emporte||0,                   // 9
-          r.potage||0,                            // 10
-          r.repas_enfant||0,                      // 11
-          r.conference||0,                        // 12
-          r.photocopies||0,                       // 13
-          r.lessive||0,                           // 14
-          r.absence_repas||0,                     // 15
-          r.petite_portion||'non',                // 16
-          r.boisson_eur ? fmt2(r.boisson_eur) : '0.00', // 17
-          r.observations||'',                     // 18
-          `S${r.semaine}`,                        // 19
-          String(r.mois).padStart(2,'0'),         // 20
+          `S${r.semaine} ${r.annee}`,                    // 0 semaine
+          `${res.nom||''} ${res.prenom||''}`.trim(),      // 1 résident
+          res.appt||'',                                   // 2 appt
+          dateFr,                                         // 3 date
+          jourSem,                                        // 4 jour sem
+          r.repas_salle||0,                               // 5
+          r.repas_invite||0,                              // 6
+          r.plateau_porte||0,                             // 7
+          r.plateau_emporte||0,                           // 8
+          r.potage||0,                                    // 9
+          r.petite_portion === 'oui' ? 1 : '',            // 10 petite portion
+          r.boisson_eur ? fmt2(r.boisson_eur) : '0.00',  // 11
+          r.observations||'',                             // 12
+          `S${r.semaine}`,                                // 13
+          String(r.mois).padStart(2,'0'),                 // 14
         ]
       };
     });
@@ -9774,7 +9757,7 @@ async function loadHistorique() {
 }
 
 function renderHistorique() {
-  const NCOLS = 22;
+  const NCOLS = 17;
   const filters = Array.from(document.querySelectorAll('.hist-filter')).map(i => i.value.trim().toLowerCase());
 
   const filtered = histAllRows.filter(row => {
@@ -9793,11 +9776,12 @@ function renderHistorique() {
     <tr>
       ${row.cols.map((c,i) => {
         if (i===0) return `<td><span class="badge badge-blue">${c}</span></td>`;
-        if (i===16) return `<td>${c === 'oui' ? '<span class="badge badge-orange">Oui</span>' : 'Non'}</td>`;
-        if (i===18) return `<td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c}">${c}</td>`;
-        if ([5,6,7,8,9,10,11,12,13,14,15].includes(i)) {
+        if (i===10) return `<td style="text-align:center">${c === 1 ? '<span class="badge badge-orange">1</span>' : ''}</td>`;
+        if (i===12) return `<td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${c}">${c}</td>`;
+        if ([5,6,7,8,9].includes(i)) {
           return `<td style="text-align:center;${c>0?'font-weight:600;color:var(--rouge)':''}">${c}</td>`;
         }
+        if (i===11) return `<td style="text-align:center;${parseFloat(c)>0?'font-weight:600;color:var(--rouge)':''}">${c}</td>`;
         return `<td>${c}</td>`;
       }).join('')}
       <td><button class="btn btn-danger btn-sm" title="Supprimer cette ligne" onclick="deleteSaisieRow(${row._id})">🗑</button></td>
@@ -10096,15 +10080,15 @@ async function generateChef() {
         <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:2px solid ${maison.couleur};padding-bottom:4px">Informations complémentaires</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:140px">Envie de fruits</td>
-            <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:100px">Envie de fruits</td>
             <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;NON</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;width:70px;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
           </tr>
           <tr>
-            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600">Envie de laitages</td>
-            <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;OUI</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;background:#f5f5f5;font-weight:600;width:100px">Envie de laitages</td>
             <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;NON</td>
+            <td style="padding:7px 10px;border:1px solid #ccc;text-align:center">☐&nbsp;OUI</td>
             <td style="padding:7px 10px;border:1px solid #ccc"></td>
           </tr>
           <tr>
