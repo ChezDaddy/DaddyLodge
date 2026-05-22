@@ -1683,11 +1683,12 @@ let saisieData = {}; // { jour: { col: val } }
 let saisieExistingIds = {}; // { jour: id }
 
 function initSaisie() {
-  // Set lundi to current week's monday
+  // Par défaut : lundi de la semaine SUIVANTE
   const today = new Date();
   const monday = getMondayOf(today);
+  const nextMonday = addDays(monday, 7);
   const luEl = document.getElementById('saisie-lundi');
-  if (!luEl.value) luEl.value = fmtDateISO(monday);
+  if (!luEl.value) luEl.value = fmtDateISO(nextMonday);
   onSaisieLundiChange();
 
   // Load residents for selector
@@ -2329,8 +2330,10 @@ async function generateMH() {
 function printMH() {
   const content = document.getElementById('mh-print-content');
   if (!content) { toast('Générez d\'abord la feuille','error'); return; }
+  const mhDate = document.getElementById('mh-date').value || '';
+  const mhTitle = mhDate ? 'Feuille MH ' + mhDate.replace(/-/g,' ') : 'Feuille MH';
   const w = window.open('','_blank');
-  w.document.write(`<html><head><title>Feuille MH</title>
+  w.document.write(`<html><head><title>${mhTitle}</title>
     <style>
       @font-face { font-family: Calibri; }
       body{font-family:Calibri,Arial,sans-serif;font-size:11px;padding:10mm}
@@ -2551,8 +2554,10 @@ async function generateChef() {
 function printChef() {
   const content = document.getElementById('chef-print-content');
   if (!content) { toast('Générez d\'abord la feuille','error'); return; }
+  const chefLundi = document.getElementById('chef-lundi').value || '';
+  const chefTitle = chefLundi ? 'Feuille Chef ' + chefLundi.replace(/-/g,' ') : 'Feuille Chef';
   const w = window.open('','_blank');
-  w.document.write(`<html><head><title>Feuille Chef</title>
+  w.document.write(`<html><head><title>${chefTitle}</title>
     <style>
       body{font-family:Arial,sans-serif;font-size:11px;padding:10mm}
       table{width:100%;border-collapse:collapse;margin-bottom:12px}
@@ -4497,11 +4502,12 @@ let saisieData = {}; // { jour: { col: val } }
 let saisieExistingIds = {}; // { jour: id }
 
 function initSaisie() {
-  // Set lundi to current week's monday
+  // Par défaut : lundi de la semaine SUIVANTE
   const today = new Date();
   const monday = getMondayOf(today);
+  const nextMonday = addDays(monday, 7);
   const luEl = document.getElementById('saisie-lundi');
-  if (!luEl.value) luEl.value = fmtDateISO(monday);
+  if (!luEl.value) luEl.value = fmtDateISO(nextMonday);
   onSaisieLundiChange();
 
   // Load residents for selector
@@ -5143,8 +5149,10 @@ async function generateMH() {
 function printMH() {
   const content = document.getElementById('mh-print-content');
   if (!content) { toast('Générez d\'abord la feuille','error'); return; }
+  const mhDate = document.getElementById('mh-date').value || '';
+  const mhTitle = mhDate ? 'Feuille MH ' + mhDate.replace(/-/g,' ') : 'Feuille MH';
   const w = window.open('','_blank');
-  w.document.write(`<html><head><title>Feuille MH</title>
+  w.document.write(`<html><head><title>${mhTitle}</title>
     <style>
       @font-face { font-family: Calibri; }
       body{font-family:Calibri,Arial,sans-serif;font-size:11px;padding:10mm}
@@ -5365,8 +5373,10 @@ async function generateChef() {
 function printChef() {
   const content = document.getElementById('chef-print-content');
   if (!content) { toast('Générez d\'abord la feuille','error'); return; }
+  const chefLundi = document.getElementById('chef-lundi').value || '';
+  const chefTitle = chefLundi ? 'Feuille Chef ' + chefLundi.replace(/-/g,' ') : 'Feuille Chef';
   const w = window.open('','_blank');
-  w.document.write(`<html><head><title>Feuille Chef</title>
+  w.document.write(`<html><head><title>${chefTitle}</title>
     <style>
       body{font-family:Arial,sans-serif;font-size:11px;padding:10mm}
       table{width:100%;border-collapse:collapse;margin-bottom:12px}
@@ -7311,11 +7321,12 @@ let saisieData = {}; // { jour: { col: val } }
 let saisieExistingIds = {}; // { jour: id }
 
 function initSaisie() {
-  // Set lundi to current week's monday
+  // Par défaut : lundi de la semaine SUIVANTE
   const today = new Date();
   const monday = getMondayOf(today);
+  const nextMonday = addDays(monday, 7);
   const luEl = document.getElementById('saisie-lundi');
-  if (!luEl.value) luEl.value = fmtDateISO(monday);
+  if (!luEl.value) luEl.value = fmtDateISO(nextMonday);
   onSaisieLundiChange();
 
   // Load residents for selector
@@ -7957,8 +7968,10 @@ async function generateMH() {
 function printMH() {
   const content = document.getElementById('mh-print-content');
   if (!content) { toast('Générez d\'abord la feuille','error'); return; }
+  const mhDate = document.getElementById('mh-date').value || '';
+  const mhTitle = mhDate ? 'Feuille MH ' + mhDate.replace(/-/g,' ') : 'Feuille MH';
   const w = window.open('','_blank');
-  w.document.write(`<html><head><title>Feuille MH</title>
+  w.document.write(`<html><head><title>${mhTitle}</title>
     <style>
       @font-face { font-family: Calibri; }
       body{font-family:Calibri,Arial,sans-serif;font-size:11px;padding:10mm}
@@ -8179,8 +8192,10 @@ async function generateChef() {
 function printChef() {
   const content = document.getElementById('chef-print-content');
   if (!content) { toast('Générez d\'abord la feuille','error'); return; }
+  const chefLundi = document.getElementById('chef-lundi').value || '';
+  const chefTitle = chefLundi ? 'Feuille Chef ' + chefLundi.replace(/-/g,' ') : 'Feuille Chef';
   const w = window.open('','_blank');
-  w.document.write(`<html><head><title>Feuille Chef</title>
+  w.document.write(`<html><head><title>${chefTitle}</title>
     <style>
       body{font-family:Arial,sans-serif;font-size:11px;padding:10mm}
       table{width:100%;border-collapse:collapse;margin-bottom:12px}
@@ -10125,11 +10140,12 @@ let saisieData = {}; // { jour: { col: val } }
 let saisieExistingIds = {}; // { jour: id }
 
 function initSaisie() {
-  // Set lundi to current week's monday
+  // Par défaut : lundi de la semaine SUIVANTE
   const today = new Date();
   const monday = getMondayOf(today);
+  const nextMonday = addDays(monday, 7);
   const luEl = document.getElementById('saisie-lundi');
-  if (!luEl.value) luEl.value = fmtDateISO(monday);
+  if (!luEl.value) luEl.value = fmtDateISO(nextMonday);
   onSaisieLundiChange();
 
   // Load residents for selector
@@ -10771,8 +10787,10 @@ async function generateMH() {
 function printMH() {
   const content = document.getElementById('mh-print-content');
   if (!content) { toast('Générez d\'abord la feuille','error'); return; }
+  const mhDate = document.getElementById('mh-date').value || '';
+  const mhTitle = mhDate ? 'Feuille MH ' + mhDate.replace(/-/g,' ') : 'Feuille MH';
   const w = window.open('','_blank');
-  w.document.write(`<html><head><title>Feuille MH</title>
+  w.document.write(`<html><head><title>${mhTitle}</title>
     <style>
       @font-face { font-family: Calibri; }
       body{font-family:Calibri,Arial,sans-serif;font-size:11px;padding:10mm}
@@ -10993,8 +11011,10 @@ async function generateChef() {
 function printChef() {
   const content = document.getElementById('chef-print-content');
   if (!content) { toast('Générez d\'abord la feuille','error'); return; }
+  const chefLundi = document.getElementById('chef-lundi').value || '';
+  const chefTitle = chefLundi ? 'Feuille Chef ' + chefLundi.replace(/-/g,' ') : 'Feuille Chef';
   const w = window.open('','_blank');
-  w.document.write(`<html><head><title>Feuille Chef</title>
+  w.document.write(`<html><head><title>${chefTitle}</title>
     <style>
       body{font-family:Arial,sans-serif;font-size:11px;padding:10mm}
       table{width:100%;border-collapse:collapse;margin-bottom:12px}
