@@ -1707,6 +1707,8 @@ async function populateSaisieResidents() {
   const dimanche = lundi ? fmtDateISO(addDays(new Date(lundi), 6)) : null;
   const actifs = allResidents.filter(r => {
     if (!lundi) return true;
+    // Les NR (appt='NR') sont toujours actifs — pas de notion d'entrée/sortie
+    if ((r.appt||'').toUpperCase() === 'NR') return true;
     // Actif si date_entree <= dimanche ET (pas de date_sortie OU date_sortie >= lundi)
     const entree = r.date_entree || '0000-01-01';
     const sortie = r.date_sortie || '9999-12-31';
@@ -1881,20 +1883,27 @@ async function saveSaisie() {
         ...rowData
       };
 
+      // Ne pas écrire en base si tout est à 0 ET pas de ligne existante
+      const hasValues = (record.repas_salle||0)+(record.repas_invite||0)+
+        (record.plateau_porte||0)+(record.plateau_emporte||0)+
+        (record.potage||0)+(record.boisson_eur||0) > 0
+        || (record.observations||'').trim();
+      if (!hasValues && !saisieExistingIds[dateStr]) continue;
+
       // Upsert : insert ou update si doublon sur (maison_id, resident_id, date)
       try {
         const ins = await sbUpsert('dl_repas', record, 'maison_id,resident_id,date');
         if (ins && ins[0]) saisieExistingIds[dateStr] = ins[0].id;
       } catch(e2) {
-        // Fallback : si upsert échoue, tenter un update direct
-        if (saisieExistingIds[dateStr]) {
-          await sbUpdate('dl_repas', saisieExistingIds[dateStr], record);
-        } else {
-          const ex = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=eq.${dateStr}&select=id&limit=1`);
-          if (ex && ex[0]) {
-            await sbUpdate('dl_repas', ex[0].id, record);
-            saisieExistingIds[dateStr] = ex[0].id;
-          } else throw e2;
+        // Fallback update direct
+        const existId = saisieExistingIds[dateStr] ||
+          (await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=eq.${dateStr}&select=id&limit=1`)
+            .then(ex => ex && ex[0] ? ex[0].id : null).catch(()=>null));
+        if (existId) {
+          await sbUpdate('dl_repas', existId, record);
+          saisieExistingIds[dateStr] = existId;
+        } else if (hasValues) {
+          throw e2;
         }
       }
     }
@@ -1934,7 +1943,7 @@ async function reportSemainePrecedente() {
   document.getElementById('saisie-status').textContent = 'Chargement semaine précédente…';
   try {
     const data = await sbSelect('dl_repas',
-      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=gte.${lundiPrec}&date=lte.${dimPrec}`);
+      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${parseInt(resId)}&date=gte.${lundiPrec}&date=lte.${dimPrec}`);
 
     if (!data.length) {
       toast('Aucune saisie trouvée pour la semaine précédente','info');
@@ -2884,8 +2893,12 @@ async function loadReguJour() {
   try {
     // Résidents actifs : date de sortie nulle OU postérieure à la date choisie
     const residentsFiltered = allResidents.filter(r => {
-      if (!r.date_sortie) return true;
-      return r.date_sortie >= dateStr;
+      // Les NR sont toujours actifs
+      if ((r.appt||'').toUpperCase() === 'NR') return true;
+      if (!r.date_entree && !r.date_sortie) return true;
+      const entree = r.date_entree || '0000-01-01';
+      const sortie = r.date_sortie || '9999-12-31';
+      return entree <= dateStr && sortie >= dateStr;
     });
     const residents = [
       ...residentsFiltered.filter(r => r.nom === 'GARDIEN'),
@@ -4508,6 +4521,8 @@ async function populateSaisieResidents() {
   const dimanche = lundi ? fmtDateISO(addDays(new Date(lundi), 6)) : null;
   const actifs = allResidents.filter(r => {
     if (!lundi) return true;
+    // Les NR (appt='NR') sont toujours actifs — pas de notion d'entrée/sortie
+    if ((r.appt||'').toUpperCase() === 'NR') return true;
     // Actif si date_entree <= dimanche ET (pas de date_sortie OU date_sortie >= lundi)
     const entree = r.date_entree || '0000-01-01';
     const sortie = r.date_sortie || '9999-12-31';
@@ -4682,20 +4697,27 @@ async function saveSaisie() {
         ...rowData
       };
 
+      // Ne pas écrire en base si tout est à 0 ET pas de ligne existante
+      const hasValues = (record.repas_salle||0)+(record.repas_invite||0)+
+        (record.plateau_porte||0)+(record.plateau_emporte||0)+
+        (record.potage||0)+(record.boisson_eur||0) > 0
+        || (record.observations||'').trim();
+      if (!hasValues && !saisieExistingIds[dateStr]) continue;
+
       // Upsert : insert ou update si doublon sur (maison_id, resident_id, date)
       try {
         const ins = await sbUpsert('dl_repas', record, 'maison_id,resident_id,date');
         if (ins && ins[0]) saisieExistingIds[dateStr] = ins[0].id;
       } catch(e2) {
-        // Fallback : si upsert échoue, tenter un update direct
-        if (saisieExistingIds[dateStr]) {
-          await sbUpdate('dl_repas', saisieExistingIds[dateStr], record);
-        } else {
-          const ex = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=eq.${dateStr}&select=id&limit=1`);
-          if (ex && ex[0]) {
-            await sbUpdate('dl_repas', ex[0].id, record);
-            saisieExistingIds[dateStr] = ex[0].id;
-          } else throw e2;
+        // Fallback update direct
+        const existId = saisieExistingIds[dateStr] ||
+          (await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=eq.${dateStr}&select=id&limit=1`)
+            .then(ex => ex && ex[0] ? ex[0].id : null).catch(()=>null));
+        if (existId) {
+          await sbUpdate('dl_repas', existId, record);
+          saisieExistingIds[dateStr] = existId;
+        } else if (hasValues) {
+          throw e2;
         }
       }
     }
@@ -4735,7 +4757,7 @@ async function reportSemainePrecedente() {
   document.getElementById('saisie-status').textContent = 'Chargement semaine précédente…';
   try {
     const data = await sbSelect('dl_repas',
-      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=gte.${lundiPrec}&date=lte.${dimPrec}`);
+      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${parseInt(resId)}&date=gte.${lundiPrec}&date=lte.${dimPrec}`);
 
     if (!data.length) {
       toast('Aucune saisie trouvée pour la semaine précédente','info');
@@ -5685,8 +5707,12 @@ async function loadReguJour() {
   try {
     // Résidents actifs : date de sortie nulle OU postérieure à la date choisie
     const residentsFiltered = allResidents.filter(r => {
-      if (!r.date_sortie) return true;
-      return r.date_sortie >= dateStr;
+      // Les NR sont toujours actifs
+      if ((r.appt||'').toUpperCase() === 'NR') return true;
+      if (!r.date_entree && !r.date_sortie) return true;
+      const entree = r.date_entree || '0000-01-01';
+      const sortie = r.date_sortie || '9999-12-31';
+      return entree <= dateStr && sortie >= dateStr;
     });
     const residents = [
       ...residentsFiltered.filter(r => r.nom === 'GARDIEN'),
@@ -7309,6 +7335,8 @@ async function populateSaisieResidents() {
   const dimanche = lundi ? fmtDateISO(addDays(new Date(lundi), 6)) : null;
   const actifs = allResidents.filter(r => {
     if (!lundi) return true;
+    // Les NR (appt='NR') sont toujours actifs — pas de notion d'entrée/sortie
+    if ((r.appt||'').toUpperCase() === 'NR') return true;
     // Actif si date_entree <= dimanche ET (pas de date_sortie OU date_sortie >= lundi)
     const entree = r.date_entree || '0000-01-01';
     const sortie = r.date_sortie || '9999-12-31';
@@ -7483,20 +7511,27 @@ async function saveSaisie() {
         ...rowData
       };
 
+      // Ne pas écrire en base si tout est à 0 ET pas de ligne existante
+      const hasValues = (record.repas_salle||0)+(record.repas_invite||0)+
+        (record.plateau_porte||0)+(record.plateau_emporte||0)+
+        (record.potage||0)+(record.boisson_eur||0) > 0
+        || (record.observations||'').trim();
+      if (!hasValues && !saisieExistingIds[dateStr]) continue;
+
       // Upsert : insert ou update si doublon sur (maison_id, resident_id, date)
       try {
         const ins = await sbUpsert('dl_repas', record, 'maison_id,resident_id,date');
         if (ins && ins[0]) saisieExistingIds[dateStr] = ins[0].id;
       } catch(e2) {
-        // Fallback : si upsert échoue, tenter un update direct
-        if (saisieExistingIds[dateStr]) {
-          await sbUpdate('dl_repas', saisieExistingIds[dateStr], record);
-        } else {
-          const ex = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=eq.${dateStr}&select=id&limit=1`);
-          if (ex && ex[0]) {
-            await sbUpdate('dl_repas', ex[0].id, record);
-            saisieExistingIds[dateStr] = ex[0].id;
-          } else throw e2;
+        // Fallback update direct
+        const existId = saisieExistingIds[dateStr] ||
+          (await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=eq.${dateStr}&select=id&limit=1`)
+            .then(ex => ex && ex[0] ? ex[0].id : null).catch(()=>null));
+        if (existId) {
+          await sbUpdate('dl_repas', existId, record);
+          saisieExistingIds[dateStr] = existId;
+        } else if (hasValues) {
+          throw e2;
         }
       }
     }
@@ -7536,7 +7571,7 @@ async function reportSemainePrecedente() {
   document.getElementById('saisie-status').textContent = 'Chargement semaine précédente…';
   try {
     const data = await sbSelect('dl_repas',
-      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=gte.${lundiPrec}&date=lte.${dimPrec}`);
+      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${parseInt(resId)}&date=gte.${lundiPrec}&date=lte.${dimPrec}`);
 
     if (!data.length) {
       toast('Aucune saisie trouvée pour la semaine précédente','info');
@@ -8486,8 +8521,12 @@ async function loadReguJour() {
   try {
     // Résidents actifs : date de sortie nulle OU postérieure à la date choisie
     const residentsFiltered = allResidents.filter(r => {
-      if (!r.date_sortie) return true;
-      return r.date_sortie >= dateStr;
+      // Les NR sont toujours actifs
+      if ((r.appt||'').toUpperCase() === 'NR') return true;
+      if (!r.date_entree && !r.date_sortie) return true;
+      const entree = r.date_entree || '0000-01-01';
+      const sortie = r.date_sortie || '9999-12-31';
+      return entree <= dateStr && sortie >= dateStr;
     });
     const residents = [
       ...residentsFiltered.filter(r => r.nom === 'GARDIEN'),
@@ -10110,6 +10149,8 @@ async function populateSaisieResidents() {
   const dimanche = lundi ? fmtDateISO(addDays(new Date(lundi), 6)) : null;
   const actifs = allResidents.filter(r => {
     if (!lundi) return true;
+    // Les NR (appt='NR') sont toujours actifs — pas de notion d'entrée/sortie
+    if ((r.appt||'').toUpperCase() === 'NR') return true;
     // Actif si date_entree <= dimanche ET (pas de date_sortie OU date_sortie >= lundi)
     const entree = r.date_entree || '0000-01-01';
     const sortie = r.date_sortie || '9999-12-31';
@@ -10284,20 +10325,27 @@ async function saveSaisie() {
         ...rowData
       };
 
+      // Ne pas écrire en base si tout est à 0 ET pas de ligne existante
+      const hasValues = (record.repas_salle||0)+(record.repas_invite||0)+
+        (record.plateau_porte||0)+(record.plateau_emporte||0)+
+        (record.potage||0)+(record.boisson_eur||0) > 0
+        || (record.observations||'').trim();
+      if (!hasValues && !saisieExistingIds[dateStr]) continue;
+
       // Upsert : insert ou update si doublon sur (maison_id, resident_id, date)
       try {
         const ins = await sbUpsert('dl_repas', record, 'maison_id,resident_id,date');
         if (ins && ins[0]) saisieExistingIds[dateStr] = ins[0].id;
       } catch(e2) {
-        // Fallback : si upsert échoue, tenter un update direct
-        if (saisieExistingIds[dateStr]) {
-          await sbUpdate('dl_repas', saisieExistingIds[dateStr], record);
-        } else {
-          const ex = await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=eq.${dateStr}&select=id&limit=1`);
-          if (ex && ex[0]) {
-            await sbUpdate('dl_repas', ex[0].id, record);
-            saisieExistingIds[dateStr] = ex[0].id;
-          } else throw e2;
+        // Fallback update direct
+        const existId = saisieExistingIds[dateStr] ||
+          (await sbSelect('dl_repas', `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=eq.${dateStr}&select=id&limit=1`)
+            .then(ex => ex && ex[0] ? ex[0].id : null).catch(()=>null));
+        if (existId) {
+          await sbUpdate('dl_repas', existId, record);
+          saisieExistingIds[dateStr] = existId;
+        } else if (hasValues) {
+          throw e2;
         }
       }
     }
@@ -10337,7 +10385,7 @@ async function reportSemainePrecedente() {
   document.getElementById('saisie-status').textContent = 'Chargement semaine précédente…';
   try {
     const data = await sbSelect('dl_repas',
-      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${resId}&date=gte.${lundiPrec}&date=lte.${dimPrec}`);
+      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${parseInt(resId)}&date=gte.${lundiPrec}&date=lte.${dimPrec}`);
 
     if (!data.length) {
       toast('Aucune saisie trouvée pour la semaine précédente','info');
@@ -11287,8 +11335,12 @@ async function loadReguJour() {
   try {
     // Résidents actifs : date de sortie nulle OU postérieure à la date choisie
     const residentsFiltered = allResidents.filter(r => {
-      if (!r.date_sortie) return true;
-      return r.date_sortie >= dateStr;
+      // Les NR sont toujours actifs
+      if ((r.appt||'').toUpperCase() === 'NR') return true;
+      if (!r.date_entree && !r.date_sortie) return true;
+      const entree = r.date_entree || '0000-01-01';
+      const sortie = r.date_sortie || '9999-12-31';
+      return entree <= dateStr && sortie >= dateStr;
     });
     const residents = [
       ...residentsFiltered.filter(r => r.nom === 'GARDIEN'),
