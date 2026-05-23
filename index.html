@@ -900,15 +900,15 @@ const SAISIE_COLS = [
 
 // USERS (stockés côté client pour ce MVP - en prod: table Supabase)
 const USERS_STATIC = [
-  { login:'Finance',    pwd:'Henon63122!', role:'admin',      maisonId:null },
-  { login:'Arnaud',     pwd:'Henon69004!', role:'ops',        maisonId:null },
-  { login:'Operations', pwd:'Henon69004!', role:'ops',        maisonId:null },
-  { login:'Directeur',  pwd:'Daddy2026!',  role:'directeur',  maisonId:null },
-  { login:'Lecteur',    pwd:'Daddy2026!',  role:'lecteur',    maisonId:null },
-  { login:'MaisonAUT',  pwd:'Henon71400!', role:'maison',     maisonId:'AUT' },
-  { login:'MaisonLMD',  pwd:'Henon59110!', role:'maison',     maisonId:'LMD' },
-  { login:'MaisonDOU',  pwd:'Henon59500!', role:'maison',     maisonId:'DOU' },
-  { login:'MaisonCFD',  pwd:'Henon63100!', role:'maison',     maisonId:'CFD' },
+  { login:'Finance',    hash:'ce8469382632fecabcf9740ef2b1eb0579807e63895b196c5088491ba11ecae1', role:'admin',      maisonId:null },
+  { login:'Arnaud',     hash:'012e950adc5ab76e08359a2652346c78119b2fec21f366af07fb8252639f130c', role:'ops',        maisonId:null },
+  { login:'Operations', hash:'012e950adc5ab76e08359a2652346c78119b2fec21f366af07fb8252639f130c', role:'ops',        maisonId:null },
+  { login:'Directeur',  hash:'5e52bb93cb00b18cdb3575e26c69a9c68e6717e35d1c7d90bf4c71f3bf482de3',  role:'directeur',  maisonId:null },
+  { login:'Lecteur',    hash:'e62df9d6e4416f45581e37561388a971bd71089ff979b5d00eaa376621ac7981',  role:'lecteur',    maisonId:null },
+  { login:'MaisonAUT',  hash:'975faad60ec28a9ecab8e3dbcbcf66e66f26d5eb0e5b3b21107614e6fdf86a16', role:'maison',     maisonId:'AUT' },
+  { login:'MaisonLMD',  hash:'71d32105ba1c2b76a5beb51db4dbe67163b6191cdccaf2fe7c9d99806eed9c2f', role:'maison',     maisonId:'LMD' },
+  { login:'MaisonDOU',  hash:'d33c33293e421d9af07b4d48377a9e39b88024ac8f67d300cd4726b95906c3a5', role:'maison',     maisonId:'DOU' },
+  { login:'MaisonCFD',  hash:'c709625ae9569c2142f680d709a77197eef0dfb14386fec16b655ae3cd9fa969', role:'maison',     maisonId:'CFD' },
 ];
 
 const MAISONS_DEFAULT = [
@@ -1049,8 +1049,14 @@ async function initDB() {
 }
 
 function getDefaultMdp(id) {
-  const map = { AUT:'Henon71400!', LMD:'Henon59110!', DOU:'Henon59500!', CFD:'Henon63100!' };
-  return map[id] || 'Henon!';
+  // Hash SHA-256 des MdP par défaut des maisons
+  const map = {
+    AUT:'975faad60ec28a9ecab8e3dbcbcf66e66f26d5eb0e5b3b21107614e6fdf86a16',
+    LMD:'71d32105ba1c2b76a5beb51db4dbe67163b6191cdccaf2fe7c9d99806eed9c2f',
+    DOU:'d33c33293e421d9af07b4d48377a9e39b88024ac8f67d300cd4726b95906c3a5',
+    CFD:'c709625ae9569c2142f680d709a77197eef0dfb14386fec16b655ae3cd9fa969'
+  };
+  return map[id] || '697c3ea5eab490bc6694b0824f90c8f529c2c9b7cd8d8d1d0c7a1f25db917db0';
 }
 
 // =============================
@@ -1061,21 +1067,25 @@ function togglePw() {
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
-async function doLogin() {
+async function doLogin() { _doLoginAsync().catch(e => { document.getElementById('login-error').style.display='block'; console.error(e); }); }
+async function _doLoginAsync() {
   const login = document.getElementById('login-user').value.trim();
   const pwd   = document.getElementById('login-pw').value;
   const err   = document.getElementById('login-error');
   err.style.display='none';
 
-  // Check static users first
-  let user = USERS_STATIC.find(u => u.login === login && u.pwd === pwd);
+  // Hasher le mot de passe saisi
+  const pwdHash = await hashPwd(pwd);
 
-  // Check dynamic maison users (if maisons loaded)
+  // Check static users (comparaison sur hash)
+  let user = USERS_STATIC.find(u => u.login === login && u.hash === pwdHash);
+
+  // Check dynamic maison users (hash stocké en base)
   if (!user) {
     try {
       const maisons = await sbSelect('dl_maisons', `?login=eq.${encodeURIComponent(login)}&select=id,nom,couleur,mdp,services`);
-      if (maisons.length > 0 && maisons[0].mdp === pwd) {
-        user = { login, pwd, role:'maison', maisonId: maisons[0].id };
+      if (maisons.length > 0 && maisons[0].mdp === pwdHash) {
+        user = { login, role:'maison', maisonId: maisons[0].id };
       }
     } catch(e) {}
   }
@@ -1086,7 +1096,8 @@ async function doLogin() {
   }
 
   currentUser = user;
-  sessionStorage.setItem('dl_user', JSON.stringify(user));
+  const { hash: _h, ...userSafe } = user; // ne pas stocker le hash en session
+  sessionStorage.setItem('dl_user', JSON.stringify(userSafe));
   await startApp();
 }
 
@@ -1094,6 +1105,9 @@ function doLogout() {
   sessionStorage.removeItem('dl_user');
   currentUser = null;
   currentMaison = null;
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pw').value = '';
+  document.getElementById('login-error').style.display = 'none';
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app').style.display='none';
 }
@@ -1115,10 +1129,10 @@ async function startApp() {
   try {
     for (const login of ['Directeur','Lecteur']) {
       const cle = `pwd_${login.toLowerCase()}`;
-      const cfg = await sbSelect('dl_config', `?cle=eq.${cle}&limit=1`);
+      const cfg = await sbSelect('dl_config', `?cle=eq.${cle}&maison_id=is.null&limit=1`);
       if (cfg && cfg.length && cfg[0].valeur) {
         const u = USERS_STATIC.find(x => x.login === login);
-        if (u) u.pwd = cfg[0].valeur;
+        if (u) u.hash = cfg[0].valeur; // hash SHA-256 stocké en base
       }
     }
   } catch(e) {}
@@ -1256,6 +1270,11 @@ function calcHT(prix, tva) {
 }
 
 // ISO week number
+async function hashPwd(pwd) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
 function isReadOnly() {
   return currentUser && currentUser.role === 'lecteur';
 }
@@ -2799,7 +2818,8 @@ async function resetMdp(maisId) {
   const newMdp = document.getElementById(`mdp-new-${maisId}`).value.trim();
   if (!newMdp) { toast('Saisissez le nouveau mot de passe','error'); return; }
   try {
-    await sbUpdate('dl_maisons', maisId, { mdp: newMdp });
+    const newHash = await hashPwd(newMdp);
+    await sbUpdate('dl_maisons', maisId, { mdp: newHash });
     toast('Mot de passe réinitialisé','success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
 }
@@ -2811,12 +2831,13 @@ async function resetMdpGlobal(login) {
   const u = USERS_STATIC.find(x => x.login === login);
   if (!u) { toast('Compte introuvable','error'); return; }
   u.pwd = newMdp;
-  // Persister dans dl_config
+  // Persister dans dl_config via upsert sur la clé 'cle'
   const cle = `pwd_${login.toLowerCase()}`;
   try {
-    const ex = await sbSelect('dl_config', `?cle=eq.${cle}&limit=1`);
-    if (ex && ex.length) await sbUpdate('dl_config', ex[0].id, { valeur: newMdp });
-    else await sbInsert('dl_config', { cle, valeur: newMdp });
+    const newHash = await hashPwd(newMdp);
+    // Mettre à jour le hash en mémoire
+    u.hash = newHash;
+    await sbUpsert('dl_config', { cle, valeur: newHash, maison_id: null }, 'maison_id,cle');
     document.getElementById(`mdp-new-global-${login}`).value = '';
     toast(`Mot de passe de ${login} réinitialisé`,'success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
@@ -3721,15 +3742,15 @@ const SAISIE_COLS = [
 
 // USERS (stockés côté client pour ce MVP - en prod: table Supabase)
 const USERS_STATIC = [
-  { login:'Finance',    pwd:'Henon63122!', role:'admin',      maisonId:null },
-  { login:'Arnaud',     pwd:'Henon69004!', role:'ops',        maisonId:null },
-  { login:'Operations', pwd:'Henon69004!', role:'ops',        maisonId:null },
-  { login:'Directeur',  pwd:'Daddy2026!',  role:'directeur',  maisonId:null },
-  { login:'Lecteur',    pwd:'Daddy2026!',  role:'lecteur',    maisonId:null },
-  { login:'MaisonAUT',  pwd:'Henon71400!', role:'maison',     maisonId:'AUT' },
-  { login:'MaisonLMD',  pwd:'Henon59110!', role:'maison',     maisonId:'LMD' },
-  { login:'MaisonDOU',  pwd:'Henon59500!', role:'maison',     maisonId:'DOU' },
-  { login:'MaisonCFD',  pwd:'Henon63100!', role:'maison',     maisonId:'CFD' },
+  { login:'Finance',    hash:'ce8469382632fecabcf9740ef2b1eb0579807e63895b196c5088491ba11ecae1', role:'admin',      maisonId:null },
+  { login:'Arnaud',     hash:'012e950adc5ab76e08359a2652346c78119b2fec21f366af07fb8252639f130c', role:'ops',        maisonId:null },
+  { login:'Operations', hash:'012e950adc5ab76e08359a2652346c78119b2fec21f366af07fb8252639f130c', role:'ops',        maisonId:null },
+  { login:'Directeur',  hash:'5e52bb93cb00b18cdb3575e26c69a9c68e6717e35d1c7d90bf4c71f3bf482de3',  role:'directeur',  maisonId:null },
+  { login:'Lecteur',    hash:'e62df9d6e4416f45581e37561388a971bd71089ff979b5d00eaa376621ac7981',  role:'lecteur',    maisonId:null },
+  { login:'MaisonAUT',  hash:'975faad60ec28a9ecab8e3dbcbcf66e66f26d5eb0e5b3b21107614e6fdf86a16', role:'maison',     maisonId:'AUT' },
+  { login:'MaisonLMD',  hash:'71d32105ba1c2b76a5beb51db4dbe67163b6191cdccaf2fe7c9d99806eed9c2f', role:'maison',     maisonId:'LMD' },
+  { login:'MaisonDOU',  hash:'d33c33293e421d9af07b4d48377a9e39b88024ac8f67d300cd4726b95906c3a5', role:'maison',     maisonId:'DOU' },
+  { login:'MaisonCFD',  hash:'c709625ae9569c2142f680d709a77197eef0dfb14386fec16b655ae3cd9fa969', role:'maison',     maisonId:'CFD' },
 ];
 
 const MAISONS_DEFAULT = [
@@ -3870,8 +3891,14 @@ async function initDB() {
 }
 
 function getDefaultMdp(id) {
-  const map = { AUT:'Henon71400!', LMD:'Henon59110!', DOU:'Henon59500!', CFD:'Henon63100!' };
-  return map[id] || 'Henon!';
+  // Hash SHA-256 des MdP par défaut des maisons
+  const map = {
+    AUT:'975faad60ec28a9ecab8e3dbcbcf66e66f26d5eb0e5b3b21107614e6fdf86a16',
+    LMD:'71d32105ba1c2b76a5beb51db4dbe67163b6191cdccaf2fe7c9d99806eed9c2f',
+    DOU:'d33c33293e421d9af07b4d48377a9e39b88024ac8f67d300cd4726b95906c3a5',
+    CFD:'c709625ae9569c2142f680d709a77197eef0dfb14386fec16b655ae3cd9fa969'
+  };
+  return map[id] || '697c3ea5eab490bc6694b0824f90c8f529c2c9b7cd8d8d1d0c7a1f25db917db0';
 }
 
 // =============================
@@ -3882,21 +3909,25 @@ function togglePw() {
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
-async function doLogin() {
+async function doLogin() { _doLoginAsync().catch(e => { document.getElementById('login-error').style.display='block'; console.error(e); }); }
+async function _doLoginAsync() {
   const login = document.getElementById('login-user').value.trim();
   const pwd   = document.getElementById('login-pw').value;
   const err   = document.getElementById('login-error');
   err.style.display='none';
 
-  // Check static users first
-  let user = USERS_STATIC.find(u => u.login === login && u.pwd === pwd);
+  // Hasher le mot de passe saisi
+  const pwdHash = await hashPwd(pwd);
 
-  // Check dynamic maison users (if maisons loaded)
+  // Check static users (comparaison sur hash)
+  let user = USERS_STATIC.find(u => u.login === login && u.hash === pwdHash);
+
+  // Check dynamic maison users (hash stocké en base)
   if (!user) {
     try {
       const maisons = await sbSelect('dl_maisons', `?login=eq.${encodeURIComponent(login)}&select=id,nom,couleur,mdp,services`);
-      if (maisons.length > 0 && maisons[0].mdp === pwd) {
-        user = { login, pwd, role:'maison', maisonId: maisons[0].id };
+      if (maisons.length > 0 && maisons[0].mdp === pwdHash) {
+        user = { login, role:'maison', maisonId: maisons[0].id };
       }
     } catch(e) {}
   }
@@ -3907,7 +3938,8 @@ async function doLogin() {
   }
 
   currentUser = user;
-  sessionStorage.setItem('dl_user', JSON.stringify(user));
+  const { hash: _h, ...userSafe } = user; // ne pas stocker le hash en session
+  sessionStorage.setItem('dl_user', JSON.stringify(userSafe));
   await startApp();
 }
 
@@ -3915,6 +3947,9 @@ function doLogout() {
   sessionStorage.removeItem('dl_user');
   currentUser = null;
   currentMaison = null;
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pw').value = '';
+  document.getElementById('login-error').style.display = 'none';
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app').style.display='none';
 }
@@ -3936,10 +3971,10 @@ async function startApp() {
   try {
     for (const login of ['Directeur','Lecteur']) {
       const cle = `pwd_${login.toLowerCase()}`;
-      const cfg = await sbSelect('dl_config', `?cle=eq.${cle}&limit=1`);
+      const cfg = await sbSelect('dl_config', `?cle=eq.${cle}&maison_id=is.null&limit=1`);
       if (cfg && cfg.length && cfg[0].valeur) {
         const u = USERS_STATIC.find(x => x.login === login);
-        if (u) u.pwd = cfg[0].valeur;
+        if (u) u.hash = cfg[0].valeur; // hash SHA-256 stocké en base
       }
     }
   } catch(e) {}
@@ -4077,6 +4112,11 @@ function calcHT(prix, tva) {
 }
 
 // ISO week number
+async function hashPwd(pwd) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
 function isReadOnly() {
   return currentUser && currentUser.role === 'lecteur';
 }
@@ -5620,7 +5660,8 @@ async function resetMdp(maisId) {
   const newMdp = document.getElementById(`mdp-new-${maisId}`).value.trim();
   if (!newMdp) { toast('Saisissez le nouveau mot de passe','error'); return; }
   try {
-    await sbUpdate('dl_maisons', maisId, { mdp: newMdp });
+    const newHash = await hashPwd(newMdp);
+    await sbUpdate('dl_maisons', maisId, { mdp: newHash });
     toast('Mot de passe réinitialisé','success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
 }
@@ -5632,12 +5673,13 @@ async function resetMdpGlobal(login) {
   const u = USERS_STATIC.find(x => x.login === login);
   if (!u) { toast('Compte introuvable','error'); return; }
   u.pwd = newMdp;
-  // Persister dans dl_config
+  // Persister dans dl_config via upsert sur la clé 'cle'
   const cle = `pwd_${login.toLowerCase()}`;
   try {
-    const ex = await sbSelect('dl_config', `?cle=eq.${cle}&limit=1`);
-    if (ex && ex.length) await sbUpdate('dl_config', ex[0].id, { valeur: newMdp });
-    else await sbInsert('dl_config', { cle, valeur: newMdp });
+    const newHash = await hashPwd(newMdp);
+    // Mettre à jour le hash en mémoire
+    u.hash = newHash;
+    await sbUpsert('dl_config', { cle, valeur: newHash, maison_id: null }, 'maison_id,cle');
     document.getElementById(`mdp-new-global-${login}`).value = '';
     toast(`Mot de passe de ${login} réinitialisé`,'success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
@@ -6542,15 +6584,15 @@ const SAISIE_COLS = [
 
 // USERS (stockés côté client pour ce MVP - en prod: table Supabase)
 const USERS_STATIC = [
-  { login:'Finance',    pwd:'Henon63122!', role:'admin',      maisonId:null },
-  { login:'Arnaud',     pwd:'Henon69004!', role:'ops',        maisonId:null },
-  { login:'Operations', pwd:'Henon69004!', role:'ops',        maisonId:null },
-  { login:'Directeur',  pwd:'Daddy2026!',  role:'directeur',  maisonId:null },
-  { login:'Lecteur',    pwd:'Daddy2026!',  role:'lecteur',    maisonId:null },
-  { login:'MaisonAUT',  pwd:'Henon71400!', role:'maison',     maisonId:'AUT' },
-  { login:'MaisonLMD',  pwd:'Henon59110!', role:'maison',     maisonId:'LMD' },
-  { login:'MaisonDOU',  pwd:'Henon59500!', role:'maison',     maisonId:'DOU' },
-  { login:'MaisonCFD',  pwd:'Henon63100!', role:'maison',     maisonId:'CFD' },
+  { login:'Finance',    hash:'ce8469382632fecabcf9740ef2b1eb0579807e63895b196c5088491ba11ecae1', role:'admin',      maisonId:null },
+  { login:'Arnaud',     hash:'012e950adc5ab76e08359a2652346c78119b2fec21f366af07fb8252639f130c', role:'ops',        maisonId:null },
+  { login:'Operations', hash:'012e950adc5ab76e08359a2652346c78119b2fec21f366af07fb8252639f130c', role:'ops',        maisonId:null },
+  { login:'Directeur',  hash:'5e52bb93cb00b18cdb3575e26c69a9c68e6717e35d1c7d90bf4c71f3bf482de3',  role:'directeur',  maisonId:null },
+  { login:'Lecteur',    hash:'e62df9d6e4416f45581e37561388a971bd71089ff979b5d00eaa376621ac7981',  role:'lecteur',    maisonId:null },
+  { login:'MaisonAUT',  hash:'975faad60ec28a9ecab8e3dbcbcf66e66f26d5eb0e5b3b21107614e6fdf86a16', role:'maison',     maisonId:'AUT' },
+  { login:'MaisonLMD',  hash:'71d32105ba1c2b76a5beb51db4dbe67163b6191cdccaf2fe7c9d99806eed9c2f', role:'maison',     maisonId:'LMD' },
+  { login:'MaisonDOU',  hash:'d33c33293e421d9af07b4d48377a9e39b88024ac8f67d300cd4726b95906c3a5', role:'maison',     maisonId:'DOU' },
+  { login:'MaisonCFD',  hash:'c709625ae9569c2142f680d709a77197eef0dfb14386fec16b655ae3cd9fa969', role:'maison',     maisonId:'CFD' },
 ];
 
 const MAISONS_DEFAULT = [
@@ -6691,8 +6733,14 @@ async function initDB() {
 }
 
 function getDefaultMdp(id) {
-  const map = { AUT:'Henon71400!', LMD:'Henon59110!', DOU:'Henon59500!', CFD:'Henon63100!' };
-  return map[id] || 'Henon!';
+  // Hash SHA-256 des MdP par défaut des maisons
+  const map = {
+    AUT:'975faad60ec28a9ecab8e3dbcbcf66e66f26d5eb0e5b3b21107614e6fdf86a16',
+    LMD:'71d32105ba1c2b76a5beb51db4dbe67163b6191cdccaf2fe7c9d99806eed9c2f',
+    DOU:'d33c33293e421d9af07b4d48377a9e39b88024ac8f67d300cd4726b95906c3a5',
+    CFD:'c709625ae9569c2142f680d709a77197eef0dfb14386fec16b655ae3cd9fa969'
+  };
+  return map[id] || '697c3ea5eab490bc6694b0824f90c8f529c2c9b7cd8d8d1d0c7a1f25db917db0';
 }
 
 // =============================
@@ -6703,21 +6751,25 @@ function togglePw() {
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
-async function doLogin() {
+async function doLogin() { _doLoginAsync().catch(e => { document.getElementById('login-error').style.display='block'; console.error(e); }); }
+async function _doLoginAsync() {
   const login = document.getElementById('login-user').value.trim();
   const pwd   = document.getElementById('login-pw').value;
   const err   = document.getElementById('login-error');
   err.style.display='none';
 
-  // Check static users first
-  let user = USERS_STATIC.find(u => u.login === login && u.pwd === pwd);
+  // Hasher le mot de passe saisi
+  const pwdHash = await hashPwd(pwd);
 
-  // Check dynamic maison users (if maisons loaded)
+  // Check static users (comparaison sur hash)
+  let user = USERS_STATIC.find(u => u.login === login && u.hash === pwdHash);
+
+  // Check dynamic maison users (hash stocké en base)
   if (!user) {
     try {
       const maisons = await sbSelect('dl_maisons', `?login=eq.${encodeURIComponent(login)}&select=id,nom,couleur,mdp,services`);
-      if (maisons.length > 0 && maisons[0].mdp === pwd) {
-        user = { login, pwd, role:'maison', maisonId: maisons[0].id };
+      if (maisons.length > 0 && maisons[0].mdp === pwdHash) {
+        user = { login, role:'maison', maisonId: maisons[0].id };
       }
     } catch(e) {}
   }
@@ -6728,7 +6780,8 @@ async function doLogin() {
   }
 
   currentUser = user;
-  sessionStorage.setItem('dl_user', JSON.stringify(user));
+  const { hash: _h, ...userSafe } = user; // ne pas stocker le hash en session
+  sessionStorage.setItem('dl_user', JSON.stringify(userSafe));
   await startApp();
 }
 
@@ -6736,6 +6789,9 @@ function doLogout() {
   sessionStorage.removeItem('dl_user');
   currentUser = null;
   currentMaison = null;
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pw').value = '';
+  document.getElementById('login-error').style.display = 'none';
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app').style.display='none';
 }
@@ -6757,10 +6813,10 @@ async function startApp() {
   try {
     for (const login of ['Directeur','Lecteur']) {
       const cle = `pwd_${login.toLowerCase()}`;
-      const cfg = await sbSelect('dl_config', `?cle=eq.${cle}&limit=1`);
+      const cfg = await sbSelect('dl_config', `?cle=eq.${cle}&maison_id=is.null&limit=1`);
       if (cfg && cfg.length && cfg[0].valeur) {
         const u = USERS_STATIC.find(x => x.login === login);
-        if (u) u.pwd = cfg[0].valeur;
+        if (u) u.hash = cfg[0].valeur; // hash SHA-256 stocké en base
       }
     }
   } catch(e) {}
@@ -6898,6 +6954,11 @@ function calcHT(prix, tva) {
 }
 
 // ISO week number
+async function hashPwd(pwd) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
 function isReadOnly() {
   return currentUser && currentUser.role === 'lecteur';
 }
@@ -8441,7 +8502,8 @@ async function resetMdp(maisId) {
   const newMdp = document.getElementById(`mdp-new-${maisId}`).value.trim();
   if (!newMdp) { toast('Saisissez le nouveau mot de passe','error'); return; }
   try {
-    await sbUpdate('dl_maisons', maisId, { mdp: newMdp });
+    const newHash = await hashPwd(newMdp);
+    await sbUpdate('dl_maisons', maisId, { mdp: newHash });
     toast('Mot de passe réinitialisé','success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
 }
@@ -8453,12 +8515,13 @@ async function resetMdpGlobal(login) {
   const u = USERS_STATIC.find(x => x.login === login);
   if (!u) { toast('Compte introuvable','error'); return; }
   u.pwd = newMdp;
-  // Persister dans dl_config
+  // Persister dans dl_config via upsert sur la clé 'cle'
   const cle = `pwd_${login.toLowerCase()}`;
   try {
-    const ex = await sbSelect('dl_config', `?cle=eq.${cle}&limit=1`);
-    if (ex && ex.length) await sbUpdate('dl_config', ex[0].id, { valeur: newMdp });
-    else await sbInsert('dl_config', { cle, valeur: newMdp });
+    const newHash = await hashPwd(newMdp);
+    // Mettre à jour le hash en mémoire
+    u.hash = newHash;
+    await sbUpsert('dl_config', { cle, valeur: newHash, maison_id: null }, 'maison_id,cle');
     document.getElementById(`mdp-new-global-${login}`).value = '';
     toast(`Mot de passe de ${login} réinitialisé`,'success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
@@ -9363,15 +9426,15 @@ const SAISIE_COLS = [
 
 // USERS (stockés côté client pour ce MVP - en prod: table Supabase)
 const USERS_STATIC = [
-  { login:'Finance',    pwd:'Henon63122!', role:'admin',      maisonId:null },
-  { login:'Arnaud',     pwd:'Henon69004!', role:'ops',        maisonId:null },
-  { login:'Operations', pwd:'Henon69004!', role:'ops',        maisonId:null },
-  { login:'Directeur',  pwd:'Daddy2026!',  role:'directeur',  maisonId:null },
-  { login:'Lecteur',    pwd:'Daddy2026!',  role:'lecteur',    maisonId:null },
-  { login:'MaisonAUT',  pwd:'Henon71400!', role:'maison',     maisonId:'AUT' },
-  { login:'MaisonLMD',  pwd:'Henon59110!', role:'maison',     maisonId:'LMD' },
-  { login:'MaisonDOU',  pwd:'Henon59500!', role:'maison',     maisonId:'DOU' },
-  { login:'MaisonCFD',  pwd:'Henon63100!', role:'maison',     maisonId:'CFD' },
+  { login:'Finance',    hash:'ce8469382632fecabcf9740ef2b1eb0579807e63895b196c5088491ba11ecae1', role:'admin',      maisonId:null },
+  { login:'Arnaud',     hash:'012e950adc5ab76e08359a2652346c78119b2fec21f366af07fb8252639f130c', role:'ops',        maisonId:null },
+  { login:'Operations', hash:'012e950adc5ab76e08359a2652346c78119b2fec21f366af07fb8252639f130c', role:'ops',        maisonId:null },
+  { login:'Directeur',  hash:'5e52bb93cb00b18cdb3575e26c69a9c68e6717e35d1c7d90bf4c71f3bf482de3',  role:'directeur',  maisonId:null },
+  { login:'Lecteur',    hash:'e62df9d6e4416f45581e37561388a971bd71089ff979b5d00eaa376621ac7981',  role:'lecteur',    maisonId:null },
+  { login:'MaisonAUT',  hash:'975faad60ec28a9ecab8e3dbcbcf66e66f26d5eb0e5b3b21107614e6fdf86a16', role:'maison',     maisonId:'AUT' },
+  { login:'MaisonLMD',  hash:'71d32105ba1c2b76a5beb51db4dbe67163b6191cdccaf2fe7c9d99806eed9c2f', role:'maison',     maisonId:'LMD' },
+  { login:'MaisonDOU',  hash:'d33c33293e421d9af07b4d48377a9e39b88024ac8f67d300cd4726b95906c3a5', role:'maison',     maisonId:'DOU' },
+  { login:'MaisonCFD',  hash:'c709625ae9569c2142f680d709a77197eef0dfb14386fec16b655ae3cd9fa969', role:'maison',     maisonId:'CFD' },
 ];
 
 const MAISONS_DEFAULT = [
@@ -9512,8 +9575,14 @@ async function initDB() {
 }
 
 function getDefaultMdp(id) {
-  const map = { AUT:'Henon71400!', LMD:'Henon59110!', DOU:'Henon59500!', CFD:'Henon63100!' };
-  return map[id] || 'Henon!';
+  // Hash SHA-256 des MdP par défaut des maisons
+  const map = {
+    AUT:'975faad60ec28a9ecab8e3dbcbcf66e66f26d5eb0e5b3b21107614e6fdf86a16',
+    LMD:'71d32105ba1c2b76a5beb51db4dbe67163b6191cdccaf2fe7c9d99806eed9c2f',
+    DOU:'d33c33293e421d9af07b4d48377a9e39b88024ac8f67d300cd4726b95906c3a5',
+    CFD:'c709625ae9569c2142f680d709a77197eef0dfb14386fec16b655ae3cd9fa969'
+  };
+  return map[id] || '697c3ea5eab490bc6694b0824f90c8f529c2c9b7cd8d8d1d0c7a1f25db917db0';
 }
 
 // =============================
@@ -9524,21 +9593,25 @@ function togglePw() {
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
-async function doLogin() {
+async function doLogin() { _doLoginAsync().catch(e => { document.getElementById('login-error').style.display='block'; console.error(e); }); }
+async function _doLoginAsync() {
   const login = document.getElementById('login-user').value.trim();
   const pwd   = document.getElementById('login-pw').value;
   const err   = document.getElementById('login-error');
   err.style.display='none';
 
-  // Check static users first
-  let user = USERS_STATIC.find(u => u.login === login && u.pwd === pwd);
+  // Hasher le mot de passe saisi
+  const pwdHash = await hashPwd(pwd);
 
-  // Check dynamic maison users (if maisons loaded)
+  // Check static users (comparaison sur hash)
+  let user = USERS_STATIC.find(u => u.login === login && u.hash === pwdHash);
+
+  // Check dynamic maison users (hash stocké en base)
   if (!user) {
     try {
       const maisons = await sbSelect('dl_maisons', `?login=eq.${encodeURIComponent(login)}&select=id,nom,couleur,mdp,services`);
-      if (maisons.length > 0 && maisons[0].mdp === pwd) {
-        user = { login, pwd, role:'maison', maisonId: maisons[0].id };
+      if (maisons.length > 0 && maisons[0].mdp === pwdHash) {
+        user = { login, role:'maison', maisonId: maisons[0].id };
       }
     } catch(e) {}
   }
@@ -9549,7 +9622,8 @@ async function doLogin() {
   }
 
   currentUser = user;
-  sessionStorage.setItem('dl_user', JSON.stringify(user));
+  const { hash: _h, ...userSafe } = user; // ne pas stocker le hash en session
+  sessionStorage.setItem('dl_user', JSON.stringify(userSafe));
   await startApp();
 }
 
@@ -9557,6 +9631,9 @@ function doLogout() {
   sessionStorage.removeItem('dl_user');
   currentUser = null;
   currentMaison = null;
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pw').value = '';
+  document.getElementById('login-error').style.display = 'none';
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app').style.display='none';
 }
@@ -9578,10 +9655,10 @@ async function startApp() {
   try {
     for (const login of ['Directeur','Lecteur']) {
       const cle = `pwd_${login.toLowerCase()}`;
-      const cfg = await sbSelect('dl_config', `?cle=eq.${cle}&limit=1`);
+      const cfg = await sbSelect('dl_config', `?cle=eq.${cle}&maison_id=is.null&limit=1`);
       if (cfg && cfg.length && cfg[0].valeur) {
         const u = USERS_STATIC.find(x => x.login === login);
-        if (u) u.pwd = cfg[0].valeur;
+        if (u) u.hash = cfg[0].valeur; // hash SHA-256 stocké en base
       }
     }
   } catch(e) {}
@@ -9719,6 +9796,11 @@ function calcHT(prix, tva) {
 }
 
 // ISO week number
+async function hashPwd(pwd) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
 function isReadOnly() {
   return currentUser && currentUser.role === 'lecteur';
 }
@@ -11262,7 +11344,8 @@ async function resetMdp(maisId) {
   const newMdp = document.getElementById(`mdp-new-${maisId}`).value.trim();
   if (!newMdp) { toast('Saisissez le nouveau mot de passe','error'); return; }
   try {
-    await sbUpdate('dl_maisons', maisId, { mdp: newMdp });
+    const newHash = await hashPwd(newMdp);
+    await sbUpdate('dl_maisons', maisId, { mdp: newHash });
     toast('Mot de passe réinitialisé','success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
 }
@@ -11274,12 +11357,13 @@ async function resetMdpGlobal(login) {
   const u = USERS_STATIC.find(x => x.login === login);
   if (!u) { toast('Compte introuvable','error'); return; }
   u.pwd = newMdp;
-  // Persister dans dl_config
+  // Persister dans dl_config via upsert sur la clé 'cle'
   const cle = `pwd_${login.toLowerCase()}`;
   try {
-    const ex = await sbSelect('dl_config', `?cle=eq.${cle}&limit=1`);
-    if (ex && ex.length) await sbUpdate('dl_config', ex[0].id, { valeur: newMdp });
-    else await sbInsert('dl_config', { cle, valeur: newMdp });
+    const newHash = await hashPwd(newMdp);
+    // Mettre à jour le hash en mémoire
+    u.hash = newHash;
+    await sbUpsert('dl_config', { cle, valeur: newHash, maison_id: null }, 'maison_id,cle');
     document.getElementById(`mdp-new-global-${login}`).value = '';
     toast(`Mot de passe de ${login} réinitialisé`,'success');
   } catch(e) { toast('Erreur: '+e.message,'error'); }
