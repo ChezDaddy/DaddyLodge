@@ -370,7 +370,7 @@
     </div>
     <button class="btn-login" onclick="doLogin()">Se connecter</button>
     <div class="login-error" id="login-error">Identifiant ou mot de passe incorrect.</div>
-    <div class="login-version">v1.0.2 — Juillet 2026</div>
+    <div class="login-version">v1.0.3 — Août 2026</div>
   </div>
 </div>
 
@@ -1657,7 +1657,7 @@ async function genererFactureVacant(appt, mois) {
   factLastCalc = {
     totaux: { totRepasSalle:0, totRepasInvite:0, totPlateauPorte:0, totPlateauEmporte:0, totPotage:0, totBoisson:0, nbRepasAmeliore:0, nbTotalRepas:0 },
     tarifs: { prixN1:0, prixN2:0, tvaRepas:0, prixPortage:0, tarifInviteTTC:null, tarifPotageTTC:null },
-    montants: { repasSalleHT:0, repasInviteHT:0, plateauPorteHT:0, ameliorHT:0, potageHT:0 },
+    montants: { repasSalleHT:0, repasInviteHT:0, plateauPorteHT:0, plateauEmporteHT:0, ameliorHT:0, potageHT:0 },
     loyer: { ht:0, prorataQte:1 },
     charges: { ht:0, prorataQte:1 },
     prestaBase: { ttc: prestaBaseTTC, qte: 1, libelle: 'Résidents_Adhésion mensuelle Individuel', tarif: tarifPrestaBase },
@@ -2005,11 +2005,34 @@ async function saveRepasAmeliore() {
 
 // ========== SECTION 3 — Services : calculs de tarification ==========
 
+// v1.0.3 — normalise un libellé pour une comparaison tolérante :
+// insensible aux accents, à la casse, aux espaces multiples, et ignore tout
+// suffixe entre parenthèses (ex: "Portage repas (supplément)" ~ "Portage repas").
+function normaliserLibelleCarte(s) {
+  return (s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // retire les accents
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')  // retire tout suffixe entre parenthèses
+    .replace(/[^a-z0-9]+/g, ' ') // ponctuation/espaces -> espace simple
+    .trim();
+}
+
 async function getTarifCarte(libelle, mois) {
   // Recherche la prestation par libellé exact, valide pour le mois facturé
   try {
-    const data = await sbSelect('dl_carte',
+    let data = await sbSelect('dl_carte',
       `?maison_id=eq.${currentMaison.id}&libelle=eq.${encodeURIComponent(libelle)}&order=id&limit=20`);
+
+    // v1.0.3 — repli tolérant : si aucune correspondance exacte, on recherche par libellé
+    // normalisé (accents/casse/espaces/suffixe entre parenthèses ignorés). Évite qu'un
+    // simple renommage du libellé dans la Carte (ex: ajout de "(supplément)") ne fasse
+    // silencieusement tomber le tarif à 0€.
+    if (!data || !data.length) {
+      const toutesLignes = await sbSelect('dl_carte', `?maison_id=eq.${currentMaison.id}&order=id&limit=500`);
+      const cible = normaliserLibelleCarte(libelle);
+      data = (toutesLignes || []).filter(c => normaliserLibelleCarte(c.libelle) === cible);
+    }
+
     if (!data || !data.length) return null;
     const valide = data.find(c => (!c.mois_debut || c.mois_debut <= mois) && (!c.mois_fin || c.mois_fin >= mois));
     return valide || data[0];
@@ -2022,6 +2045,10 @@ function nbJoursDansMois(mois) {
 }
 
 async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
+  // v1.0.3 — correctif : dl_carte.prix1/prix2 sont déjà TTC (Spéc. Technique §2.4).
+  // Le code appliquait une seconde fois la TVA (* (1+tva/100)) sur tous les tarifs repas
+  // (Repas en salle, Invité, Portage, Potage, Cotisation Restaurant), surfacturant de +10%.
+  // Correction : ces montants sont désormais utilisés tels quels comme TTC.
   const nbJours = nbJoursDansMois(mois);
   const categorie = res.categorie || '1';
 
@@ -2034,6 +2061,8 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
   const totBoisson        = repasMois.reduce((s,r) => s + (parseFloat(r.boisson_eur)||0), 0);
 
   // Repas amélioré : nb de jours "repas amélioré" du mois où le résident a effectivement mangé
+  // v1.0.3 — correctif : s'applique désormais quel que soit le type de repas pris ce jour-là
+  // (Salle, Plateau porté ou Plateau emporté) — auparavant limité au seul Repas salle.
   const repasByDate = {};
   for (const r of repasMois) repasByDate[r.date] = r;
   let nbRepasAmeliore = 0;
@@ -2041,13 +2070,15 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
   for (const j of (joursAmeliore||[])) {
     const dateStr = `${anneeFact}-${String(moisFact).padStart(2,'0')}-${String(j).padStart(2,'0')}`;
     const r = repasByDate[dateStr];
-    if (r && (r.repas_salle||0) > 0) nbRepasAmeliore++;
+    const aMangeCeJour = r && ((r.repas_salle||0) + (r.plateau_porte||0) + (r.plateau_emporte||0)) > 0;
+    if (aMangeCeJour) nbRepasAmeliore++;
   }
 
   // ----- Tarifs carte -----
   const tarifRepasCat   = await getTarifCarte(`Repas en salle_Catégorie ${categorie}`, mois);
   const tarifInvite     = await getTarifCarte('Repas Invité', mois);
   const tarifPortage    = await getTarifCarte('Portage repas', mois);
+  const tarifEmporte    = await getTarifCarte('Plateau à emporter', mois);
   const tarifAmeliore   = await getTarifCarte('Repas amélioré', mois);
   const tarifPotage     = await getTarifCarte('Potage (1L)', mois);
   const tarifCotisRest  = await getTarifCarte('Cotisation Restaurant', mois);
@@ -2060,24 +2091,27 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
   const prixN1   = tarifRepasCat ? parseFloat(tarifRepasCat.prix1) : 0; // tarif pour 1 à N repas
   const prixN2   = tarifRepasCat && tarifRepasCat.prix2 != null ? parseFloat(tarifRepasCat.prix2) : prixN1; // tarif au-delà de N
   const tvaRepas = tarifRepasCat ? parseFloat(tarifRepasCat.tva) : 10;
-  const prixPortage = tarifPortage ? parseFloat(tarifPortage.prix1) : 0; // tarif fixe portage, toujours le même
+  const prixPortage = tarifPortage ? parseFloat(tarifPortage.prix1) : 0; // supplément fixe portage, toujours le même
+  const prixEmporte = tarifEmporte ? parseFloat(tarifEmporte.prix1) : 0; // v1.0.3 — supplément fixe plateau à emporter, toujours le même
 
-  // ----- Règle seuil N : un seul compteur partagé Repas Salle + Plateau porté -----
-  // Le prix du repas varie selon le total combiné (1→N à un tarif, au-delà à un autre)
-  // Le portage (Plateau porté) ajoute en plus son propre tarif fixe, indépendant du seuil
-  const nbTotalRepas = totRepasSalle + totPlateauPorte;
-  let montantRepasHT;
-  if (nbTotalRepas > seuilN) {
-    montantRepasHT = (seuilN * prixN1) + ((nbTotalRepas - seuilN) * prixN2);
-  } else {
-    montantRepasHT = nbTotalRepas * prixN1;
-  }
-  // Répartition de ce montant entre Salle et Plateau (proportionnelle aux quantités respectives), pour l'affichage par colonne
-  const montantRepasSalleHT   = nbTotalRepas > 0 ? montantRepasHT * (totRepasSalle / nbTotalRepas) : 0;
-  const montantPlateauPorteRepasHT = nbTotalRepas > 0 ? montantRepasHT * (totPlateauPorte / nbTotalRepas) : 0;
-  // Supplément fixe de portage, à ajouter uniquement à la colonne Plateau porté
+  // ----- Règle seuil N : un seul compteur partagé Repas Salle + Plateau porté + Plateau emporté -----
+  // v1.0.3 — correctif : le seuil N est un seuil GLOBAL, pas un barème progressif.
+  // Dès que le total mensuel (Salle + Porté + Emporté) dépasse N, TOUS les repas du mois
+  // sont facturés au tarif plein (prixN2) — pas seulement l'excédent au-delà de N.
+  // (v1.0.3/v1.0.3 appliquaient à tort un barème progressif façon tranches d'impôt.)
+  // Portage et Plateau à emporter ajoutent chacun leur propre supplément fixe, indépendant du seuil.
+  const nbTotalRepas = totRepasSalle + totPlateauPorte + totPlateauEmporte;
+  // Rappel : le seuil N reste exclusif — jusqu'au Nième repas inclus, tarif réduit ;
+  // c'est seulement à partir du (N+1)ième repas que le tarif plein s'applique (EDB §8.1, confirmé par Marie).
+  const prixRepasApplicable = nbTotalRepas > seuilN ? prixN2 : prixN1;
+  const montantRepasSalleHT   = totRepasSalle * prixRepasApplicable;
+  const montantPlateauPorteRepasHT = totPlateauPorte * prixRepasApplicable;
+  const montantPlateauEmporteRepasHT = totPlateauEmporte * prixRepasApplicable;
+  // Suppléments fixes, ajoutés uniquement à leur colonne respective
   const montantPortageHT = totPlateauPorte * prixPortage;
+  const montantEmporteSuppHT = totPlateauEmporte * prixEmporte;
   const montantPlateauPorteHT = montantPlateauPorteRepasHT + montantPortageHT;
+  const montantPlateauEmporteHT = montantPlateauEmporteRepasHT + montantEmporteSuppHT;
 
   const montantInviteHT = totRepasInvite * (tarifInvite ? parseFloat(tarifInvite.prix1) : 0);
   const montantAmelioreHT = nbRepasAmeliore * (tarifAmeliore ? parseFloat(tarifAmeliore.prix1) : 0);
@@ -2112,30 +2146,33 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
   const adhesionAnnuelleTTC = tarifAdhesionAnnuelle ? parseFloat(tarifAdhesionAnnuelle.prix1) * qteAdhesion : 0;
 
   // ----- Cotisation Restaurant -----
+  // v1.0.3 — correctif : le Plateau emporté manquait du décompte "Nb Repas" du seuil R
+  // (même oubli que pour le seuil N, corrigé en v1.0.3). Nb Repas = Salle + Porté + Emporté,
+  // avec ou sans supplément, comme précisé par Marie.
   const nbOff = (evenements||[]).filter(e => e.type === 'off').length;
   const nbHospiJours = (evenements||[]).filter(e => e.type === 'hospi')
     .reduce((s,e) => {
       const d1 = new Date(e.date_debut+'T00:00:00'), d2 = new Date(e.date_fin+'T00:00:00');
       return s + Math.round((d2-d1)/86400000) + 1;
     }, 0);
-  const totalPourSeuilR = totRepasSalle + totPlateauPorte + nbOff + nbHospiJours;
+  const totalPourSeuilR = totRepasSalle + totPlateauPorte + totPlateauEmporte + nbOff + nbHospiJours;
   let cotisationRestaurantTTC = 0;
   if (totalPourSeuilR < seuilR) {
-    const tarifRepasTTC = prixN1 * (1 + tvaRepas/100);
-    cotisationRestaurantTTC = (seuilR - totalPourSeuilR) * tarifRepasTTC;
+    cotisationRestaurantTTC = (seuilR - totalPourSeuilR) * prixN1; // prixN1 est déjà TTC (dl_carte.prix1)
   }
 
   return {
     totaux: { totRepasSalle, totRepasInvite, totPlateauPorte, totPlateauEmporte, totPotage, totBoisson, nbRepasAmeliore, nbTotalRepas },
     tarifs: {
-      prixN1, prixN2, tvaRepas, prixPortage,
-      tarifInviteTTC: tarifInvite ? parseFloat(tarifInvite.prix1) * (1 + parseFloat(tarifInvite.tva)/100) : null,
-      tarifPotageTTC: tarifPotage ? parseFloat(tarifPotage.prix1) * (1 + parseFloat(tarifPotage.tva)/100) : null,
+      prixN1, prixN2, tvaRepas, prixPortage, prixEmporte,
+      tarifInviteTTC: tarifInvite ? parseFloat(tarifInvite.prix1) : null,
+      tarifPotageTTC: tarifPotage ? parseFloat(tarifPotage.prix1) : null,
     },
     montants: {
       repasSalleHT: montantRepasSalleHT,
       repasInviteHT: montantInviteHT,
       plateauPorteHT: montantPlateauPorteHT,
+      plateauEmporteHT: montantPlateauEmporteHT,
       ameliorHT: montantAmelioreHT,
       potageHT: montantPotageHT,
     },
@@ -2180,16 +2217,20 @@ function buildTableGauche(repasMois, mois, calc, printMode) {
   const t = calc.totaux;
   const tvaMult = 1 + (calc.tarifs.tvaRepas/100);
 
+  // NB : calc.montants.*HT contiennent en réalité des montants TTC (dl_carte.prix1/prix2 sont stockés TTC,
+  // cf. Spéc. Technique §2.4). Le vrai HT s'obtient en divisant par tvaMult, pas en multipliant.
+  // v1.0.3 — Plateau emporté est désormais branché au moteur de calcul (PU repas + supplément "Plateau à emporter"),
+  // au lieu d'être figé à 0.00€ (limitation connue en v1.0.2/v1.0.3, cf. Spéc. Technique §10).
   // v1.0.2 — en impression, le pied de tableau est réduit à la seule ligne "Montant TTC"
   const tfootHTML = printMode ? `
       <tfoot>
         <tr style="background:#f5f5f5;font-weight:700">
           <td colspan="2">Montant TTC</td>
-          <td style="text-align:center">${fmt2(calc.montants.repasSalleHT*tvaMult)}€</td>
-          <td style="text-align:center">${fmt2(calc.montants.repasInviteHT*tvaMult)}€</td>
-          <td style="text-align:center">${fmt2(calc.montants.plateauPorteHT*tvaMult)}€</td>
-          <td style="text-align:center">0.00€</td>
-          <td style="text-align:center">${fmt2(calc.montants.potageHT*tvaMult)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.repasSalleHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.repasInviteHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.plateauPorteHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.plateauEmporteHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.potageHT)}€</td>
           <td style="text-align:center">${fmt2(t.totBoisson)}€</td>
         </tr>
       </tfoot>` : `
@@ -2205,38 +2246,38 @@ function buildTableGauche(repasMois, mois, calc, printMode) {
         </tr>
         <tr style="background:#eef6fb;font-size:10px;color:#2980b9">
           <td colspan="2">PU TTC (jusqu'à N=${seuilN})</td>
-          <td style="text-align:center">${fmt2(calc.tarifs.prixN1*tvaMult)}€</td>
+          <td style="text-align:center">${fmt2(calc.tarifs.prixN1)}€</td>
           <td style="text-align:center">${calc.tarifs.tarifInviteTTC != null ? fmt2(calc.tarifs.tarifInviteTTC)+'€' : '--'}</td>
-          <td style="text-align:center">${fmt2(calc.tarifs.prixN1*tvaMult + calc.tarifs.prixPortage*tvaMult)}€</td>
-          <td style="text-align:center">--</td>
+          <td style="text-align:center">${fmt2(calc.tarifs.prixN1 + calc.tarifs.prixPortage)}€</td>
+          <td style="text-align:center">${fmt2(calc.tarifs.prixN1 + calc.tarifs.prixEmporte)}€</td>
           <td style="text-align:center">${calc.tarifs.tarifPotageTTC != null ? fmt2(calc.tarifs.tarifPotageTTC)+'€' : '--'}</td>
           <td style="text-align:center">--</td>
         </tr>
         <tr style="background:#eef6fb;font-size:10px;color:#2980b9">
           <td colspan="2">PU TTC (au-delà de N=${seuilN})</td>
-          <td style="text-align:center">${fmt2(calc.tarifs.prixN2*tvaMult)}€</td>
+          <td style="text-align:center">${fmt2(calc.tarifs.prixN2)}€</td>
           <td style="text-align:center">--</td>
-          <td style="text-align:center">${fmt2(calc.tarifs.prixN2*tvaMult + calc.tarifs.prixPortage*tvaMult)}€</td>
-          <td style="text-align:center">--</td>
+          <td style="text-align:center">${fmt2(calc.tarifs.prixN2 + calc.tarifs.prixPortage)}€</td>
+          <td style="text-align:center">${fmt2(calc.tarifs.prixN2 + calc.tarifs.prixEmporte)}€</td>
           <td style="text-align:center">--</td>
           <td style="text-align:center">--</td>
         </tr>
         <tr style="background:#f5f5f5">
           <td colspan="2">Montant HT</td>
-          <td style="text-align:center">${fmt2(calc.montants.repasSalleHT)}€</td>
-          <td style="text-align:center">${fmt2(calc.montants.repasInviteHT)}€</td>
-          <td style="text-align:center">${fmt2(calc.montants.plateauPorteHT)}€</td>
-          <td style="text-align:center">0.00€</td>
-          <td style="text-align:center">${fmt2(calc.montants.potageHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.repasSalleHT/tvaMult)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.repasInviteHT/tvaMult)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.plateauPorteHT/tvaMult)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.plateauEmporteHT/tvaMult)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.potageHT/tvaMult)}€</td>
           <td style="text-align:center">${fmt2(t.totBoisson)}€</td>
         </tr>
         <tr style="background:#f5f5f5">
           <td colspan="2">Montant TTC</td>
-          <td style="text-align:center">${fmt2(calc.montants.repasSalleHT*tvaMult)}€</td>
-          <td style="text-align:center">${fmt2(calc.montants.repasInviteHT*tvaMult)}€</td>
-          <td style="text-align:center">${fmt2(calc.montants.plateauPorteHT*tvaMult)}€</td>
-          <td style="text-align:center">0.00€</td>
-          <td style="text-align:center">${fmt2(calc.montants.potageHT*tvaMult)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.repasSalleHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.repasInviteHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.plateauPorteHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.plateauEmporteHT)}€</td>
+          <td style="text-align:center">${fmt2(calc.montants.potageHT)}€</td>
           <td style="text-align:center">${fmt2(t.totBoisson)}€</td>
         </tr>
       </tfoot>`;
@@ -2265,7 +2306,7 @@ function buildTableGauche(repasMois, mois, calc, printMode) {
       Ligne orange = jour "repas amélioré" paramétré pour le mois
       <span style="margin-left:10px"><span style="color:#000">★</span> : repas amélioré</span>
     </div>
-    ${t.nbRepasAmeliore > 0 ? `<div style="margin-top:8px;font-size:11px"><strong>Repas amélioré :</strong> ${t.nbRepasAmeliore} jour(s) — ${fmt2(calc.montants.ameliorHT)}€ HT</div>` : ''}`}
+    ${t.nbRepasAmeliore > 0 ? `<div style="margin-top:8px;font-size:11px"><strong>Repas amélioré :</strong> ${t.nbRepasAmeliore} jour(s) — ${fmt2(calc.montants.ameliorHT)}€ TTC</div>` : ''}`}
   `;
 }
 
@@ -2318,9 +2359,8 @@ function buildTableDroite(res, calc, printMode) {
 }
 
 function renderDroiteBodyRows(res, calc, printMode) {
-  const tvaMult = 1 + (calc.tarifs.tvaRepas/100);
-  const totalRepasHT = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.potageHT + calc.montants.ameliorHT;
-  const totalRepasTTC = totalRepasHT * tvaMult;
+  // NB : calc.montants.*HT sont déjà des montants TTC (dl_carte.prix1/prix2 stockés TTC) — pas de *tvaMult ici.
+  const totalRepasTTC = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.plateauEmporteHT + calc.montants.potageHT + calc.montants.ameliorHT;
 
   const loyerTTC = calc.loyer.ht; // loyer généralement sans TVA (location)
   const chargesTTC = calc.charges.ht;
@@ -2330,7 +2370,7 @@ function renderDroiteBodyRows(res, calc, printMode) {
     { key:'charges', libelle:'Charges', pu: res.provision_charges ? fmt2(res.provision_charges) : '0.00', qte: calc.charges.prorataQte !== 1 ? calc.charges.prorataQte.toFixed(3) : '--', total: fmt2(chargesTTC) },
     { key:'prestabase', libelle:`Prestation de base (mois suivant)`, pu: fmt2(calc.prestaBase.ttc), puEditable:true, qte: calc.prestaBase.qte, total: fmt2(calc.prestaBase.ttc * calc.prestaBase.qte), highlight:true },
     { key:'totalrepas', libelle:'Total Prestations repas', pu:'--', qte:'--', total: fmt2(totalRepasTTC), gras:true },
-    { key:'cotisation', libelle:'Cotisation Restaurant', pu: fmt2(calc.tarifs.prixN1 * (1 + calc.tarifs.tvaRepas/100)), qte: calc.cotisationRestaurant.ttc > 0 ? (seuilR - calc.cotisationRestaurant.totalPourSeuilR) : 0, total: fmt2(calc.cotisationRestaurant.ttc) },
+    { key:'cotisation', libelle:'Cotisation Restaurant', pu: fmt2(calc.tarifs.prixN1), qte: calc.cotisationRestaurant.ttc > 0 ? (seuilR - calc.cotisationRestaurant.totalPourSeuilR) : 0, total: fmt2(calc.cotisationRestaurant.ttc) },
     { key:'adhesion', libelle:'Adhésion annuelle', pu: calc.adhesionAnnuelle.tarif ? fmt2(calc.adhesionAnnuelle.tarif.prix1) : '0.00', qte: calc.adhesionAnnuelle.qte, qteEditable:true, total: fmt2(calc.adhesionAnnuelle.ttc) },
   ];
 
@@ -2405,8 +2445,8 @@ function onPuPrestaBaseChange(el) {
 }
 
 function calculMontantTotal(calc) {
-  const tvaMult = 1 + (calc.tarifs.tvaRepas/100);
-  const totalRepasTTC = (calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.potageHT + calc.montants.ameliorHT) * tvaMult;
+  // NB : calc.montants.*HT sont déjà des montants TTC (dl_carte.prix1/prix2 stockés TTC) — pas de *tvaMult ici.
+  const totalRepasTTC = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.plateauEmporteHT + calc.montants.potageHT + calc.montants.ameliorHT;
   const totalLignesLibres = (factLignesLibres||[]).reduce((s,l) => s + (l.pu * l.qte), 0);
   return calc.loyer.ht + calc.charges.ht + (calc.prestaBase.ttc * calc.prestaBase.qte) + totalRepasTTC
        + calc.cotisationRestaurant.ttc + calc.adhesionAnnuelle.ttc + totalLignesLibres;
