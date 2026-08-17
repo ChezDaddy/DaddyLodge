@@ -2419,7 +2419,7 @@ function buildTableDroite(res, calc, printMode) {
 
 function renderDroiteBodyRows(res, calc, printMode) {
   // NB : calc.montants.*HT sont déjà des montants TTC (dl_carte.prix1/prix2 stockés TTC) — pas de *tvaMult ici.
-  const totalRepasTTC = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.plateauEmporteHT + calc.montants.potageHT + calc.montants.ameliorHT;
+  const totalRepasTTC = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.plateauEmporteHT + calc.montants.potageHT + calc.montants.ameliorHT + (calc.totaux.totBoisson||0); // v1.0.4 — Boisson manquait du total
 
   const loyerTTC = calc.loyer.ht; // loyer généralement sans TVA (location)
   const chargesTTC = calc.charges.ht;
@@ -2505,7 +2505,7 @@ function onPuPrestaBaseChange(el) {
 
 function calculMontantTotal(calc) {
   // NB : calc.montants.*HT sont déjà des montants TTC (dl_carte.prix1/prix2 stockés TTC) — pas de *tvaMult ici.
-  const totalRepasTTC = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.plateauEmporteHT + calc.montants.potageHT + calc.montants.ameliorHT;
+  const totalRepasTTC = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.plateauEmporteHT + calc.montants.potageHT + calc.montants.ameliorHT + (calc.totaux.totBoisson||0); // v1.0.4 — Boisson manquait du total
   const totalLignesLibres = (factLignesLibres||[]).reduce((s,l) => s + (l.pu * l.qte), 0);
   return calc.loyer.ht + calc.charges.ht + (calc.prestaBase.ttc * calc.prestaBase.qte) + totalRepasTTC
        + calc.cotisationRestaurant.ttc + calc.adhesionAnnuelle.ttc + totalLignesLibres;
