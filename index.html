@@ -370,7 +370,7 @@
     </div>
     <button class="btn-login" onclick="doLogin()">Se connecter</button>
     <div class="login-error" id="login-error">Identifiant ou mot de passe incorrect.</div>
-    <div class="login-version">v1.0.3 — Août 2026</div>
+    <div class="login-version">v1.0.4 — Août 2026</div>
   </div>
 </div>
 
@@ -692,6 +692,38 @@
             </div>
             <button class="btn btn-primary" onclick="imprimerFacturesMois()">🖨️ Imprimer</button>
           </div>
+        </div>
+        <div class="card" style="margin-top:20px">
+          <h3 style="margin-top:0">Facturation AAAA_MM</h3>
+          <p style="font-size:13px;color:var(--gris-mid);margin-bottom:14px">
+            Extrait xlsx (3 onglets) à partir des factures déjà enregistrées : 1) montant facturé par appartement,
+            2) montants HT/TVA/TTC par libellé de la Carte, 3) synthèse détaillée des consommations par appartement.
+          </p>
+          <div class="btn-group" style="margin-bottom:14px">
+            <div class="form-group">
+              <label>Période</label>
+              <select id="fact-extract-periode" style="width:140px" onchange="onFactExtractPeriodeChange()">
+                <option value="mois" selected>Mois</option>
+                <option value="annee">Année</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Année</label>
+              <input type="number" id="fact-extract-annee" style="width:90px" value="">
+            </div>
+            <div class="form-group" id="fact-extract-mois-group">
+              <label>Mois</label>
+              <select id="fact-extract-mois" style="width:120px">
+                <option value="1">Janvier</option><option value="2">Février</option>
+                <option value="3">Mars</option><option value="4">Avril</option>
+                <option value="5">Mai</option><option value="6">Juin</option>
+                <option value="7">Juillet</option><option value="8">Août</option>
+                <option value="9">Septembre</option><option value="10">Octobre</option>
+                <option value="11">Novembre</option><option value="12">Décembre</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="exportFacturationXLSX()">📊 Télécharger Facturation (xlsx)</button>
         </div>
       </div>
 
@@ -1796,6 +1828,12 @@ async function genererFacture() {
                 onclick="onAddHospi(this)" title="Ajouter une période d'hospitalisation">+</button>
         <span id="chips-hospi" style="margin-left:6px"></span>
       </div>
+      <div style="margin-bottom:10px">
+        <label style="font-size:13px;font-weight:600;cursor:pointer">
+          <input type="checkbox" id="chk-logement-non-occupe" onchange="onToggleLogementNonOccupe(this)">
+          Logement non occupé <span style="font-weight:400;color:var(--gris-mid)">(exonère la Cotisation Restaurant ce mois-ci)</span>
+        </label>
+      </div>
       <div>
         <span style="font-size:13px;font-weight:600">Jours repas amélioré (paramètre du mois)</span>
         <button type="button" class="btn btn-secondary btn-sm no-print" style="margin-left:8px"
@@ -1880,9 +1918,23 @@ function renderFactEvenements() {
     }).join('');
   }
 
+  // v1.0.4 — case "Logement non occupé"
+  const chkNonOccupe = document.getElementById('chk-logement-non-occupe');
+  if (chkNonOccupe) chkNonOccupe.checked = factEvenements.some(e => e.type === 'non_occupe');
+
   // Désactiver le bouton + Jours off si la limite de 10 est atteinte
   const btnOff = document.getElementById('btn-add-joursoff');
   if (btnOff) btnOff.disabled = (offs.length >= 10);
+}
+
+function onToggleLogementNonOccupe(chkEl) {
+  factEvenements = factEvenements.filter(e => e.type !== 'non_occupe');
+  if (chkEl.checked) {
+    const [annee, moisNum] = factCurrentMois.split('-').map(Number);
+    const dateStr = `${annee}-${String(moisNum).padStart(2,'0')}-01`;
+    factEvenements.push({ type:'non_occupe', date_debut: dateStr, date_fin: dateStr, _new: true });
+  }
+  // Le calcul (Cotisation Restaurant) sera repris au prochain "Générer la facture"
 }
 
 function onAddJourOff(btnEl) {
@@ -2093,6 +2145,8 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
   const tvaRepas = tarifRepasCat ? parseFloat(tarifRepasCat.tva) : 10;
   const prixPortage = tarifPortage ? parseFloat(tarifPortage.prix1) : 0; // supplément fixe portage, toujours le même
   const prixEmporte = tarifEmporte ? parseFloat(tarifEmporte.prix1) : 0; // v1.0.3 — supplément fixe plateau à emporter, toujours le même
+  const tvaPortage = tarifPortage ? parseFloat(tarifPortage.tva) : tvaRepas; // v1.0.4 — capturé pour l'export Facturation (détail HT/TVA)
+  const tvaEmporte = tarifEmporte ? parseFloat(tarifEmporte.tva) : tvaRepas;
 
   // ----- Règle seuil N : un seul compteur partagé Repas Salle + Plateau porté + Plateau emporté -----
   // v1.0.3 — correctif : le seuil N est un seuil GLOBAL, pas un barème progressif.
@@ -2149,6 +2203,10 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
   // v1.0.3 — correctif : le Plateau emporté manquait du décompte "Nb Repas" du seuil R
   // (même oubli que pour le seuil N, corrigé en v1.0.3). Nb Repas = Salle + Porté + Emporté,
   // avec ou sans supplément, comme précisé par Marie.
+  // Rappel : les jours Off et d'hospitalisation DÉGRÈVENT le seuil R (seuilR_effectif = seuilR - nbOff - nbHospiJours).
+  // Mathématiquement équivalent à les additionner au décompte des repas avant de comparer à seuilR (ce que fait le code
+  // ci-dessous) : seuilR - (repas + off + hospi) = (seuilR - off - hospi) - repas. Comportement inchangé, déjà correct.
+  const logementNonOccupe = (evenements||[]).some(e => e.type === 'non_occupe');
   const nbOff = (evenements||[]).filter(e => e.type === 'off').length;
   const nbHospiJours = (evenements||[]).filter(e => e.type === 'hospi')
     .reduce((s,e) => {
@@ -2157,14 +2215,15 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
     }, 0);
   const totalPourSeuilR = totRepasSalle + totPlateauPorte + totPlateauEmporte + nbOff + nbHospiJours;
   let cotisationRestaurantTTC = 0;
-  if (totalPourSeuilR < seuilR) {
+  // v1.0.4 — "Logement non occupé" : exonération totale de la Cotisation Restaurant, quel que soit le seuil R.
+  if (!logementNonOccupe && totalPourSeuilR < seuilR) {
     cotisationRestaurantTTC = (seuilR - totalPourSeuilR) * prixN1; // prixN1 est déjà TTC (dl_carte.prix1)
   }
 
   return {
     totaux: { totRepasSalle, totRepasInvite, totPlateauPorte, totPlateauEmporte, totPotage, totBoisson, nbRepasAmeliore, nbTotalRepas },
     tarifs: {
-      prixN1, prixN2, tvaRepas, prixPortage, prixEmporte,
+      prixN1, prixN2, tvaRepas, prixPortage, prixEmporte, tvaPortage, tvaEmporte,
       tarifInviteTTC: tarifInvite ? parseFloat(tarifInvite.prix1) : null,
       tarifPotageTTC: tarifPotage ? parseFloat(tarifPotage.prix1) : null,
     },
@@ -2179,7 +2238,7 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
     loyer: { ht: loyerHT, prorataQte },
     charges: { ht: chargesHT, prorataQte },
     prestaBase: { ttc: prestaBaseTTC, qte: 1, libelle: prestationBaseLabel, tarif: tarifPrestaBase },
-    cotisationRestaurant: { ttc: cotisationRestaurantTTC, totalPourSeuilR, tarif: tarifCotisRest },
+    cotisationRestaurant: { ttc: cotisationRestaurantTTC, totalPourSeuilR, tarif: tarifCotisRest, logementNonOccupe },
     adhesionAnnuelle: { ttc: adhesionAnnuelleTTC, qte: qteAdhesion, tarif: tarifAdhesionAnnuelle },
   };
 }
@@ -4564,6 +4623,16 @@ function initCSV() {
   document.getElementById('csv-periode').addEventListener('change', onCSVPeriodeChange);
   onCSVPeriodeChange();
   populateCsvFactMois();
+
+  // v1.0.4 — carte "Facturation AAAA_MM"
+  document.getElementById('fact-extract-annee').value = moisPrec.getFullYear();
+  document.getElementById('fact-extract-mois').value = moisPrec.getMonth()+1;
+  onFactExtractPeriodeChange();
+}
+
+function onFactExtractPeriodeChange() {
+  const p = document.getElementById('fact-extract-periode').value;
+  document.getElementById('fact-extract-mois-group').style.display = p==='annee' ? 'none' : '';
 }
 
 function populateCsvFactMois() {
@@ -4821,14 +4890,21 @@ function colLetter(idx) {
 }
 
 function downloadXLSX(filename, titleRow, headers, rows) {
-  const sheetXML = buildSheetXML(titleRow, headers, rows);
+  downloadXLSXMulti(filename, [{ name: 'Feuille1', titleRow, headers, rows }]);
+}
+
+function downloadXLSXMulti(filename, sheets) {
+  // sheets: [{ name, titleRow, headers, rows }] — génère un classeur xlsx à plusieurs onglets
+  const contentTypesSheets = sheets.map((s,i) =>
+    `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+  ).join('');
 
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+${contentTypesSheets}
 </Types>`;
 
   const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -4836,14 +4912,22 @@ function downloadXLSX(filename, titleRow, headers, rows) {
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
 </Relationships>`;
 
+  const workbookSheets = sheets.map((s,i) =>
+    `<sheet name="${xmlEscape(s.name).slice(0,31)}" sheetId="${i+1}" r:id="rId${i+1}"/>`
+  ).join('');
+
   const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheets><sheet name="Résidents" sheetId="1" r:id="rId1"/></sheets>
+<sheets>${workbookSheets}</sheets>
 </workbook>`;
+
+  const workbookRelsSheets = sheets.map((s,i) =>
+    `<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`
+  ).join('');
 
   const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+${workbookRelsSheets}
 </Relationships>`;
 
   const files = [
@@ -4851,8 +4935,10 @@ function downloadXLSX(filename, titleRow, headers, rows) {
     { name: '_rels/.rels', data: strToBytes(rootRels) },
     { name: 'xl/workbook.xml', data: strToBytes(workbook) },
     { name: 'xl/_rels/workbook.xml.rels', data: strToBytes(workbookRels) },
-    { name: 'xl/worksheets/sheet1.xml', data: strToBytes(sheetXML) },
   ];
+  sheets.forEach((s,i) => {
+    files.push({ name: `xl/worksheets/sheet${i+1}.xml`, data: strToBytes(buildSheetXML(s.titleRow, s.headers, s.rows)) });
+  });
 
   const zipBytes = buildZip(files);
   const blob = new Blob([zipBytes], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
@@ -4895,6 +4981,195 @@ async function exportResidentsXLSX() {
 
     downloadXLSX(filename, 'Liste des Résidents', headers, rows);
     toast(`Liste exportée (${presents.length} résidents)`, 'success');
+  } catch(e) {
+    toast('Erreur export: '+e.message, 'error');
+  }
+}
+
+// =============================
+// v1.0.4 — EXPORT FACTURATION (3 onglets) à partir des factures déjà enregistrées
+// =============================
+
+// Répartit un montant TTC connu en {ht, tva, ttc} selon un taux de TVA en %
+function splitTTC(ttc, tauxTva) {
+  const t = (typeof tauxTva === 'number' && !isNaN(tauxTva)) ? tauxTva : 0;
+  const ht = ttc / (1 + t/100);
+  return { ht, tva: ttc - ht, ttc };
+}
+
+async function exportFacturationXLSX() {
+  try {
+    const periode = document.getElementById('fact-extract-periode').value;
+    const annee = parseInt(document.getElementById('fact-extract-annee').value);
+    let moisListe = [];
+    if (periode === 'annee') {
+      for (let m = 1; m <= 12; m++) moisListe.push(`${annee}-${String(m).padStart(2,'0')}`);
+    } else {
+      const m = parseInt(document.getElementById('fact-extract-mois').value);
+      moisListe.push(`${annee}-${String(m).padStart(2,'0')}`);
+    }
+
+    // Charger toutes les factures enregistrées de la maison pour les mois en scope
+    let factures = [];
+    for (const mois of moisListe) {
+      const rows = await sbSelectAll('dl_factures', `?maison_id=eq.${currentMaison.id}&mois=eq.${mois}`);
+      factures = factures.concat(rows || []);
+    }
+
+    if (!factures.length) {
+      toast('Aucune facture enregistrée pour cette période', 'error');
+      return;
+    }
+
+    // ---------- Onglet 1 : montant facturé par appartement ----------
+    const onglet1Rows = [];
+    let totalGeneral = 0;
+    for (const f of factures) {
+      const c = f.contenu || {};
+      const r = c.resident || {};
+      onglet1Rows.push([r.appt || '', r.nom || '', r.prenom || '', +((f.montant_total||0).toFixed(2))]);
+      totalGeneral += (f.montant_total || 0);
+    }
+    onglet1Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])));
+
+    const libellePeriode = (periode === 'annee')
+      ? `Année ${annee}`
+      : `${MOIS_LONG[parseInt(document.getElementById('fact-extract-mois').value)-1]} ${annee}`;
+
+    // ---------- Onglet 2 : par libellé de la Carte (et par mois), Quantité + HT / TVA / TTC ----------
+    // clé = mois + '|' + libellé
+    const parLibelle = {};
+    function addLibelle(mois, libelle, ttc, tauxTva, qte) {
+      if (!ttc) return;
+      const key = mois + '|' + libelle;
+      if (!parLibelle[key]) parLibelle[key] = { mois, libelle, qte:0, ht:0, tva:0, ttc:0 };
+      const s = splitTTC(ttc, tauxTva);
+      parLibelle[key].qte += (qte || 0);
+      parLibelle[key].ht += s.ht;
+      parLibelle[key].tva += s.tva;
+      parLibelle[key].ttc += s.ttc;
+    }
+
+    // ---------- Onglet 3 : synthèse détaillée par appartement + mois ----------
+    const onglet3Rows = [];
+
+    for (const f of factures) {
+      const c = f.contenu || {};
+      const r = c.resident || {};
+      const calc = c.calc || {};
+      const tarifs = calc.tarifs || {};
+      const montants = calc.montants || {};
+      const mois = f.mois;
+      const tvaRepas = tarifs.tvaRepas;
+      const tvaPortage = (tarifs.tvaPortage != null) ? tarifs.tvaPortage : tvaRepas; // repli si facture antérieure à v1.0.4
+      const tvaEmporte = (tarifs.tvaEmporte != null) ? tarifs.tvaEmporte : tvaRepas;
+
+      const libelleRepasSalle = `Repas en salle_Catégorie ${r.categorie != null ? r.categorie : ''}`;
+      const loyerHT = (calc.loyer && calc.loyer.ht) || 0;
+      const chargesHT = (calc.charges && calc.charges.ht) || 0;
+      const prestaBaseTTC = (calc.prestaBase && calc.prestaBase.ttc * (calc.prestaBase.qte||1)) || 0;
+      const cotisationTTC = (calc.cotisationRestaurant && calc.cotisationRestaurant.ttc) || 0;
+      const adhesionTTC = (calc.adhesionAnnuelle && calc.adhesionAnnuelle.ttc * (calc.adhesionAnnuelle.qte||0)) || 0;
+
+      const sSalle    = splitTTC(montants.repasSalleHT||0, tvaRepas);
+      const sInvite   = splitTTC(montants.repasInviteHT||0, tvaRepas);
+      const sPorte    = splitTTC(montants.plateauPorteHT||0, tvaRepas);   // combiné repas+portage, comme affiché à l'écran
+      const sEmporte  = splitTTC(montants.plateauEmporteHT||0, tvaRepas); // combiné repas+supplément
+      const sPotage   = splitTTC(montants.potageHT||0, tvaRepas);
+      const sBoisson  = splitTTC((calc.totaux && calc.totaux.totBoisson) || 0, tvaRepas);
+      const sAmeliore = splitTTC(montants.ameliorHT||0, tvaRepas);
+
+      const totaux = calc.totaux || {};
+
+      // Lignes libres : on isole Lessive et Photocopies, le reste part dans "Autres"
+      const lignesLibres = c.lignesLibres || [];
+      let montantLessive = 0, montantPhotocopies = 0, montantAutres = 0;
+      const cibleLessive = normaliserLibelleCarte('Lessive (Jeton)');
+      const ciblePhotocopies = normaliserLibelleCarte('Photocopies');
+      for (const l of lignesLibres) {
+        const montantLigne = (parseFloat(l.pu)||0) * (parseFloat(l.qte)||0);
+        const norm = normaliserLibelleCarte(l.libelle || '');
+        if (norm === cibleLessive) montantLessive += montantLigne;
+        else if (norm === ciblePhotocopies) montantPhotocopies += montantLigne;
+        else montantAutres += montantLigne;
+        // Onglet 2 : chaque libellé de service libre, y compris Lessive/Photocopies
+        addLibelle(mois, l.libelle || '(sans libellé)', montantLigne, l.tva != null ? l.tva : 20, parseFloat(l.qte)||0);
+      }
+
+      onglet3Rows.push([
+        r.appt || '', r.nom || '', r.prenom || '', mois,
+        +loyerHT.toFixed(2), +chargesHT.toFixed(2), +prestaBaseTTC.toFixed(2), +cotisationTTC.toFixed(2), +adhesionTTC.toFixed(2),
+        +sSalle.ht.toFixed(2), +sSalle.tva.toFixed(2), +sSalle.ttc.toFixed(2),
+        +sInvite.ht.toFixed(2), +sInvite.tva.toFixed(2), +sInvite.ttc.toFixed(2),
+        +sPorte.ht.toFixed(2), +sPorte.tva.toFixed(2), +sPorte.ttc.toFixed(2),
+        +sEmporte.ht.toFixed(2), +sEmporte.tva.toFixed(2), +sEmporte.ttc.toFixed(2),
+        +sPotage.ht.toFixed(2), +sPotage.tva.toFixed(2), +sPotage.ttc.toFixed(2),
+        +sBoisson.ht.toFixed(2), +sBoisson.tva.toFixed(2), +sBoisson.ttc.toFixed(2),
+        +montantLessive.toFixed(2), +montantPhotocopies.toFixed(2), +montantAutres.toFixed(2),
+        +(f.montant_total||0).toFixed(2),
+      ]);
+
+      // Alimente l'onglet 2 avec les postes structurés (hors services libres déjà traités ci-dessus)
+      addLibelle(mois, libelleRepasSalle, montants.repasSalleHT||0, tvaRepas, totaux.totRepasSalle||0);
+      addLibelle(mois, 'Repas Invité', montants.repasInviteHT||0, tvaRepas, totaux.totRepasInvite||0);
+      addLibelle(mois, 'Plateau porté (repas + supplément)', montants.plateauPorteHT||0, tvaRepas, totaux.totPlateauPorte||0);
+      addLibelle(mois, 'Plateau à emporter (repas + supplément)', montants.plateauEmporteHT||0, tvaRepas, totaux.totPlateauEmporte||0);
+      addLibelle(mois, 'Potage (1L)', montants.potageHT||0, tvaRepas, totaux.totPotage||0);
+      addLibelle(mois, 'Repas amélioré', montants.ameliorHT||0, tvaRepas, totaux.nbRepasAmeliore||0);
+      // v1.0.4 — quantité de la Cotisation Restaurant déduite du montant facturé (seuilR n'est pas conservé dans la facture)
+      const qteCotisation = (cotisationTTC && tarifs.prixN1) ? Math.round(cotisationTTC/tarifs.prixN1) : 0;
+      addLibelle(mois, 'Cotisation Restaurant', cotisationTTC, tvaRepas, qteCotisation);
+      // v1.0.4 — Prestation de base séparée en 2 libellés, comme sur la Carte des prestations
+      if (prestaBaseTTC) {
+        const libellePrestaBase = (r.nb_residents === 2)
+          ? 'Résidents_Adhésion mensuelle Couple'
+          : 'Résidents_Adhésion mensuelle Individuel';
+        addLibelle(mois, libellePrestaBase, prestaBaseTTC, 0, calc.prestaBase && calc.prestaBase.qte || 1);
+      }
+      if (adhesionTTC) addLibelle(mois, 'Adhésion annuelle', adhesionTTC, 0, calc.adhesionAnnuelle && calc.adhesionAnnuelle.qte || 0);
+    }
+
+    onglet3Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3])));
+
+    const onglet2Rows = Object.values(parLibelle)
+      .sort((a,b) => a.mois.localeCompare(b.mois) || a.libelle.localeCompare(b.libelle))
+      .map(x => [x.mois, x.libelle, Math.round(x.qte), +x.ht.toFixed(2), +x.tva.toFixed(2), +x.ttc.toFixed(2)]);
+
+    const sheets = [
+      {
+        name: 'Facturation',
+        titleRow: `Total facturé — ${libellePeriode} : ${totalGeneral.toFixed(2)} €`,
+        headers: ['Appartement','Nom','Prénom','Montant facturé (€)'],
+        rows: onglet1Rows,
+      },
+      {
+        name: 'Par libellé Carte',
+        titleRow: `Montants par libellé de la Carte — ${libellePeriode}`,
+        headers: ['Mois','Libellé','Quantité','Montant HT (€)','Montant TVA (€)','Montant TTC (€)'],
+        rows: onglet2Rows,
+      },
+      {
+        name: 'Synthèse consommations',
+        titleRow: `Synthèse des consommations par appartement — ${libellePeriode}`,
+        headers: [
+          'Appartement','Nom','Prénom','Mois',
+          'Loyer (€)','Charges (€)','Prestation de base (€)','Cotisation repas (€)','Adhésion annuelle (€)',
+          'Repas salle HT','Repas salle TVA','Repas salle TTC',
+          'Repas Invité HT','Repas Invité TVA','Repas Invité TTC',
+          'Plat. porté HT','Plat. porté TVA','Plat. porté TTC',
+          'Plat. emporté HT','Plat. emporté TVA','Plat. emporté TTC',
+          'Potage HT','Potage TVA','Potage TTC',
+          'Boisson HT','Boisson TVA','Boisson TTC',
+          'Jetons Lessive (€)','Photocopies (€)','Autres services libres (€)',
+          'Total facturé (€)',
+        ],
+        rows: onglet3Rows,
+      },
+    ];
+
+    const filename = `Facturation_${currentMaison.id}_${periode==='annee' ? annee : moisListe[0]}.xlsx`;
+    downloadXLSXMulti(filename, sheets);
+    toast(`Export facturation généré (${factures.length} facture(s))`, 'success');
   } catch(e) {
     toast('Erreur export: '+e.message, 'error');
   }
