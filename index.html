@@ -2237,6 +2237,8 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
     },
     loyer: { ht: loyerHT, prorataQte },
     charges: { ht: chargesHT, prorataQte },
+    facturerLoyer: true, // v1.0.4 — cases "Facturer loyer"/"Facturer charges", cochées par défaut
+    facturerCharges: true,
     prestaBase: { ttc: prestaBaseTTC, qte: 1, libelle: prestationBaseLabel, tarif: tarifPrestaBase },
     cotisationRestaurant: { ttc: cotisationRestaurantTTC, totalPourSeuilR, tarif: tarifCotisRest, logementNonOccupe },
     adhesionAnnuelle: { ttc: adhesionAnnuelleTTC, qte: qteAdhesion, tarif: tarifAdhesionAnnuelle },
@@ -2421,12 +2423,16 @@ function renderDroiteBodyRows(res, calc, printMode) {
   // NB : calc.montants.*HT sont déjà des montants TTC (dl_carte.prix1/prix2 stockés TTC) — pas de *tvaMult ici.
   const totalRepasTTC = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.plateauEmporteHT + calc.montants.potageHT + calc.montants.ameliorHT + (calc.totaux.totBoisson||0); // v1.0.4 — Boisson manquait du total
 
-  const loyerTTC = calc.loyer.ht; // loyer généralement sans TVA (location)
-  const chargesTTC = calc.charges.ht;
+  // v1.0.4 — cases "Facturer loyer" / "Facturer charges" : si décochées, le montant correspondant est ramené à 0
+  // (calc.facturerLoyer/facturerCharges valent true par défaut, y compris pour les factures antérieures à cette version)
+  const facturerLoyer = calc.facturerLoyer !== false;
+  const facturerCharges = calc.facturerCharges !== false;
+  const loyerTTC = facturerLoyer ? calc.loyer.ht : 0; // loyer généralement sans TVA (location)
+  const chargesTTC = facturerCharges ? calc.charges.ht : 0;
 
   let lignesFixes = [
-    { key:'loyer', libelle:'Loyer', pu: res.loyer ? fmt2(res.loyer) : '0.00', qte: calc.loyer.prorataQte !== 1 ? calc.loyer.prorataQte.toFixed(3) : '--', total: fmt2(loyerTTC), gras:true },
-    { key:'charges', libelle:'Charges', pu: res.provision_charges ? fmt2(res.provision_charges) : '0.00', qte: calc.charges.prorataQte !== 1 ? calc.charges.prorataQte.toFixed(3) : '--', total: fmt2(chargesTTC) },
+    { key:'loyer', libelle:'Loyer', pu: res.loyer ? fmt2(res.loyer) : '0.00', qte: calc.loyer.prorataQte !== 1 ? calc.loyer.prorataQte.toFixed(3) : '--', total: fmt2(loyerTTC), gras:true, checkbox:{ id:'fact-chk-facturer-loyer', checked:facturerLoyer, onchange:'onToggleFacturerLoyer(this)', label:'Facturer' } },
+    { key:'charges', libelle:'Charges', pu: res.provision_charges ? fmt2(res.provision_charges) : '0.00', qte: calc.charges.prorataQte !== 1 ? calc.charges.prorataQte.toFixed(3) : '--', total: fmt2(chargesTTC), checkbox:{ id:'fact-chk-facturer-charges', checked:facturerCharges, onchange:'onToggleFacturerCharges(this)', label:'Facturer' } },
     { key:'prestabase', libelle:`Prestation de base (mois suivant)`, pu: fmt2(calc.prestaBase.ttc), puEditable:true, qte: calc.prestaBase.qte, total: fmt2(calc.prestaBase.ttc * calc.prestaBase.qte), highlight:true },
     { key:'totalrepas', libelle:'Total Prestations repas', pu:'--', qte:'--', total: fmt2(totalRepasTTC), gras:true },
     { key:'cotisation', libelle:'Cotisation Restaurant', pu: fmt2(calc.tarifs.prixN1), qte: calc.cotisationRestaurant.ttc > 0 ? (seuilR - calc.cotisationRestaurant.totalPourSeuilR) : 0, total: fmt2(calc.cotisationRestaurant.ttc) },
@@ -2440,7 +2446,10 @@ function renderDroiteBodyRows(res, calc, printMode) {
 
   let rows = lignesFixes.map((l) => `
     <tr style="${l.gras?'font-weight:700':''}${l.highlight?';background:#fff8dc':''}">
-      <td>${l.libelle}</td>
+      <td>${l.libelle}${(l.checkbox && !printMode) ? `
+        <label style="margin-left:10px;font-size:11px;font-weight:400;color:var(--gris-mid);cursor:pointer">
+          <input type="checkbox" id="${l.checkbox.id}" ${l.checkbox.checked?'checked':''} onchange="${l.checkbox.onchange}"> ${l.checkbox.label}
+        </label>` : ''}</td>
       <td style="text-align:right">
         ${(l.puEditable && !printMode)
           ? `<input type="number" step="0.01" id="fact-pu-prestabase" value="${l.pu}" style="width:64px;text-align:right" onchange="onPuPrestaBaseChange(this)">€`
@@ -2503,11 +2512,24 @@ function onPuPrestaBaseChange(el) {
   refreshTableDroite();
 }
 
+function onToggleFacturerLoyer(el) {
+  factLastCalc.facturerLoyer = el.checked;
+  refreshTableDroite();
+}
+
+function onToggleFacturerCharges(el) {
+  factLastCalc.facturerCharges = el.checked;
+  refreshTableDroite();
+}
+
 function calculMontantTotal(calc) {
   // NB : calc.montants.*HT sont déjà des montants TTC (dl_carte.prix1/prix2 stockés TTC) — pas de *tvaMult ici.
   const totalRepasTTC = calc.montants.repasSalleHT + calc.montants.repasInviteHT + calc.montants.plateauPorteHT + calc.montants.plateauEmporteHT + calc.montants.potageHT + calc.montants.ameliorHT + (calc.totaux.totBoisson||0); // v1.0.4 — Boisson manquait du total
   const totalLignesLibres = (factLignesLibres||[]).reduce((s,l) => s + (l.pu * l.qte), 0);
-  return calc.loyer.ht + calc.charges.ht + (calc.prestaBase.ttc * calc.prestaBase.qte) + totalRepasTTC
+  // v1.0.4 — cases "Facturer loyer" / "Facturer charges"
+  const loyerTTC = (calc.facturerLoyer !== false) ? calc.loyer.ht : 0;
+  const chargesTTC = (calc.facturerCharges !== false) ? calc.charges.ht : 0;
+  return loyerTTC + chargesTTC + (calc.prestaBase.ttc * calc.prestaBase.qte) + totalRepasTTC
        + calc.cotisationRestaurant.ttc + calc.adhesionAnnuelle.ttc + totalLignesLibres;
 }
 
