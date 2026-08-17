@@ -2763,11 +2763,22 @@ async function imprimerFacturesMois() {
   const mois = document.getElementById('csv-fact-mois').value;
   if (!mois) { toast('Choisissez un mois','error'); return; }
 
+  // v1.0.4 — la fenêtre doit être ouverte de façon SYNCHRONE, dès le clic, avant tout `await`.
+  // Sinon, une fois la chaîne d'appels asynchrone démarrée (sbSelect, calculSection3...), le navigateur
+  // ne considère plus l'appel à window.open() comme résultant directement d'un geste utilisateur, et le
+  // bloqueur de popup peut le bloquer silencieusement — l'impression groupée semble alors "ne rien faire".
+  const w = window.open('', '_blank');
+  if (!w) {
+    toast('Le navigateur a bloqué l\'ouverture de la fenêtre d\'impression — autorisez les popups pour ce site puis réessayez', 'error');
+    return;
+  }
+  w.document.write('<html><head><meta charset="utf-8"><title>Préparation…</title></head><body>Préparation des factures…</body></html>');
+
   let factures;
   try {
     factures = await sbSelect('dl_factures', `?maison_id=eq.${currentMaison.id}&mois=eq.${mois}&order=numero`);
-  } catch(e) { toast('Erreur: '+e.message,'error'); return; }
-  if (!factures || !factures.length) { toast('Aucune facture enregistrée pour ce mois','error'); return; }
+  } catch(e) { toast('Erreur: '+e.message,'error'); w.close(); return; }
+  if (!factures || !factures.length) { toast('Aucune facture enregistrée pour ce mois','error'); w.close(); return; }
 
   const mention = currentMaison.mention_legale || '';
   const [a, m] = mois.split('-').map(Number);
@@ -2776,49 +2787,59 @@ async function imprimerFacturesMois() {
   const d2 = fmtDateISO(new Date(a, m, 0));
 
   let pagesHtml = '';
-  for (const f of factures) {
-    const c = f.contenu || {};
-    const estVacant = !!f.appt_vacant || (c.resident && c.resident._vacant);
-    let res;
-    if (estVacant) {
-      res = { id:`vacant:${f.appt_vacant}`, nom:'VACANT', prenom:'', appt: f.appt_vacant,
-               nb_residents: c.resident?.nb_residents || 1, categorie: c.resident?.categorie || '1',
-               date_entree:null, date_sortie:null, _vacant:true, loyer:0, provision_charges:0 };
-    } else {
-      res = allResidents.find(r => r.id == f.resident_id) || c.resident;
-    }
-    if (!res) continue;
+  try {
+    for (const f of factures) {
+      const c = f.contenu || {};
+      const estVacant = !!f.appt_vacant || (c.resident && c.resident._vacant);
+      let res;
+      if (estVacant) {
+        res = { id:`vacant:${f.appt_vacant}`, nom:'VACANT', prenom:'', appt: f.appt_vacant,
+                 nb_residents: c.resident?.nb_residents || 1, categorie: c.resident?.categorie || '1',
+                 date_entree:null, date_sortie:null, _vacant:true, loyer:0, provision_charges:0 };
+      } else {
+        res = allResidents.find(r => r.id == f.resident_id) || c.resident;
+      }
+      if (!res) continue;
 
-    let repasMois = [];
-    if (!estVacant) {
-      try {
-        repasMois = await sbSelect('dl_repas',
-          `?maison_id=eq.${currentMaison.id}&resident_id=eq.${res.id}&date=gte.${d1}&date=lte.${d2}&order=date`);
-      } catch(e) { repasMois = []; }
-    }
+      let repasMois = [];
+      if (!estVacant) {
+        try {
+          repasMois = await sbSelect('dl_repas',
+            `?maison_id=eq.${currentMaison.id}&resident_id=eq.${res.id}&date=gte.${d1}&date=lte.${d2}&order=date`);
+        } catch(e) { repasMois = []; }
+      }
 
-    const calc = await calculSection3(res, mois, repasMois, c.evenements || [], c.joursAmeliore || []);
-    if (c.qteAdhesion != null) {
-      calc.adhesionAnnuelle.qte = c.qteAdhesion;
-      calc.adhesionAnnuelle.ttc = calc.adhesionAnnuelle.tarif ? parseFloat(calc.adhesionAnnuelle.tarif.prix1) * c.qteAdhesion : 0;
-    }
-    if (c.puPrestaBase != null) calc.prestaBase.ttc = c.puPrestaBase;
-    factLignesLibres = c.lignesLibres || [];
+      const calc = await calculSection3(res, mois, repasMois, c.evenements || [], c.joursAmeliore || []);
+      if (c.qteAdhesion != null) {
+        calc.adhesionAnnuelle.qte = c.qteAdhesion;
+        calc.adhesionAnnuelle.ttc = calc.adhesionAnnuelle.tarif ? parseFloat(calc.adhesionAnnuelle.tarif.prix1) * c.qteAdhesion : 0;
+      }
+      if (c.puPrestaBase != null) calc.prestaBase.ttc = c.puPrestaBase;
+      // v1.0.4 — restaurer les cases "Facturer loyer"/"Facturer charges" telles qu'enregistrées (sinon calculSection3
+      // les remet à true par défaut, ignorant un éventuel décochage sauvegardé pour cette facture)
+      if (c.calc && c.calc.facturerLoyer === false) calc.facturerLoyer = false;
+      if (c.calc && c.calc.facturerCharges === false) calc.facturerCharges = false;
+      factLignesLibres = c.lignesLibres || [];
 
-    const carteHtml = await buildCarteExtraitHTML(res, mois);
-    const pageHtml = buildFacturePageHTML({
-      mention, numero: f.numero, moisLabel, res, carteHtml,
-      gaucheHtml: buildTableGauche(repasMois, mois, calc, true),
-      droiteHtml: buildTableDroite(res, calc, true),
-      commentaires: f.commentaires || '',
-      title: `Facture ${f.numero}`,
-    });
-    // On ne garde que le contenu de <body> de chaque page (le gabarit complet sert pour l'impression unique ci-dessous)
-    const bodyMatch = pageHtml.match(/<body>([\s\S]*)<\/body>/);
-    pagesHtml += bodyMatch ? bodyMatch[1] : pageHtml;
+      const carteHtml = await buildCarteExtraitHTML(res, mois);
+      const pageHtml = buildFacturePageHTML({
+        mention, numero: f.numero, moisLabel, res, carteHtml,
+        gaucheHtml: buildTableGauche(repasMois, mois, calc, true),
+        droiteHtml: buildTableDroite(res, calc, true),
+        commentaires: f.commentaires || '',
+        title: `Facture ${f.numero}`,
+      });
+      // On ne garde que le contenu de <body> de chaque page (le gabarit complet sert pour l'impression unique ci-dessous)
+      const bodyMatch = pageHtml.match(/<body>([\s\S]*)<\/body>/);
+      pagesHtml += bodyMatch ? bodyMatch[1] : pageHtml;
+    }
+  } catch(e) {
+    toast('Erreur lors de la génération des factures : '+e.message, 'error');
+    w.close();
+    return;
   }
 
-  const w = window.open('','_blank');
+  w.document.open();
   w.document.write(`<html><head><meta charset="utf-8"><title>Factures ${moisLabel}</title>
     <style>
       @page { size: A4 landscape; margin: 8mm; }
@@ -4876,22 +4897,24 @@ function xmlEscape(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function buildSheetXML(titleRow, headers, rows) {
+function buildSheetXML(titleRow, headers, rows, moneyCols) {
   // titleRow: string affichée en ligne 1 (fusionnée visuellement via simple texte)
   // headers: array de libellés colonnes (ligne 2)
   // rows: array de arrays de valeurs (lignes suivantes)
+  // moneyCols: Set (ou array) d'index de colonnes à formater avec 2 décimales fixes (style s="1")
+  const money = moneyCols instanceof Set ? moneyCols : new Set(moneyCols || []);
   let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <sheetData>`;
 
   // Ligne 1 : titre
-  xml += `<row r="1"><c r="A1" t="inlineStr"><is><t>${xmlEscape(titleRow)}</t></is></c></row>`;
+  xml += `<row r="1"><c r="A1" t="inlineStr" s="2"><is><t>${xmlEscape(titleRow)}</t></is></c></row>`;
 
   // Ligne 2 : headers
   xml += `<row r="2">`;
   headers.forEach((h, i) => {
     const col = colLetter(i);
-    xml += `<c r="${col}2" t="inlineStr"><is><t>${xmlEscape(h)}</t></is></c>`;
+    xml += `<c r="${col}2" t="inlineStr" s="2"><is><t>${xmlEscape(h)}</t></is></c>`;
   });
   xml += `</row>`;
 
@@ -4902,7 +4925,8 @@ function buildSheetXML(titleRow, headers, rows) {
     row.forEach((val, cIdx) => {
       const col = colLetter(cIdx);
       if (typeof val === 'number') {
-        xml += `<c r="${col}${rowNum}"><v>${val}</v></c>`;
+        const styleAttr = money.has(cIdx) ? ' s="1"' : '';
+        xml += `<c r="${col}${rowNum}"${styleAttr}><v>${val}</v></c>`;
       } else {
         xml += `<c r="${col}${rowNum}" t="inlineStr"><is><t>${xmlEscape(val)}</t></is></c>`;
       }
@@ -4912,6 +4936,25 @@ function buildSheetXML(titleRow, headers, rows) {
 
   xml += `</sheetData></worksheet>`;
   return xml;
+}
+
+// v1.0.4 — feuille de styles minimale : police Calibri 12 par défaut partout (jamais Arial/Aptos),
+// et un format numérique à 2 décimales fixes (style s="1") pour toutes les colonnes de montants
+function buildStylesXML() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="1"><numFmt numFmtId="164" formatCode="0.00"/></numFmts>
+<fonts count="1"><font><sz val="12"/><name val="Calibri"/></font></fonts>
+<fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="3">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyFont="1"><alignment/></xf>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
 }
 
 function colLetter(idx) {
@@ -4930,7 +4973,7 @@ function downloadXLSX(filename, titleRow, headers, rows) {
 }
 
 function downloadXLSXMulti(filename, sheets) {
-  // sheets: [{ name, titleRow, headers, rows }] — génère un classeur xlsx à plusieurs onglets
+  // sheets: [{ name, titleRow, headers, rows, moneyCols }] — génère un classeur xlsx à plusieurs onglets
   const contentTypesSheets = sheets.map((s,i) =>
     `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
   ).join('');
@@ -4940,6 +4983,7 @@ function downloadXLSXMulti(filename, sheets) {
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 ${contentTypesSheets}
 </Types>`;
 
@@ -4957,6 +5001,8 @@ ${contentTypesSheets}
 <sheets>${workbookSheets}</sheets>
 </workbook>`;
 
+  // rId1..N = feuilles, rId{N+1} = styles.xml
+  const styleRid = sheets.length + 1;
   const workbookRelsSheets = sheets.map((s,i) =>
     `<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`
   ).join('');
@@ -4964,6 +5010,7 @@ ${contentTypesSheets}
   const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${workbookRelsSheets}
+<Relationship Id="rId${styleRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`;
 
   const files = [
@@ -4971,9 +5018,10 @@ ${workbookRelsSheets}
     { name: '_rels/.rels', data: strToBytes(rootRels) },
     { name: 'xl/workbook.xml', data: strToBytes(workbook) },
     { name: 'xl/_rels/workbook.xml.rels', data: strToBytes(workbookRels) },
+    { name: 'xl/styles.xml', data: strToBytes(buildStylesXML()) },
   ];
   sheets.forEach((s,i) => {
-    files.push({ name: `xl/worksheets/sheet${i+1}.xml`, data: strToBytes(buildSheetXML(s.titleRow, s.headers, s.rows)) });
+    files.push({ name: `xl/worksheets/sheet${i+1}.xml`, data: strToBytes(buildSheetXML(s.titleRow, s.headers, s.rows, s.moneyCols)) });
   });
 
   const zipBytes = buildZip(files);
@@ -5057,17 +5105,6 @@ async function exportFacturationXLSX() {
       return;
     }
 
-    // ---------- Onglet 1 : montant facturé par appartement ----------
-    const onglet1Rows = [];
-    let totalGeneral = 0;
-    for (const f of factures) {
-      const c = f.contenu || {};
-      const r = c.resident || {};
-      onglet1Rows.push([r.appt || '', r.nom || '', r.prenom || '', +((f.montant_total||0).toFixed(2))]);
-      totalGeneral += (f.montant_total || 0);
-    }
-    onglet1Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])));
-
     const libellePeriode = (periode === 'annee')
       ? `Année ${annee}`
       : `${MOIS_LONG[parseInt(document.getElementById('fact-extract-mois').value)-1]} ${annee}`;
@@ -5086,6 +5123,11 @@ async function exportFacturationXLSX() {
       parLibelle[key].ttc += s.ttc;
     }
 
+    // ---------- Onglet 1 (Facturation) et Onglet 4 (Prestation de base) ----------
+    const onglet1Rows = [];
+    const onglet4Rows = [];
+    let totalGeneral = 0, totalPrestaSolo = 0, totalPrestaCouple = 0;
+
     // ---------- Onglet 3 : synthèse détaillée par appartement + mois ----------
     const onglet3Rows = [];
 
@@ -5097,8 +5139,6 @@ async function exportFacturationXLSX() {
       const montants = calc.montants || {};
       const mois = f.mois;
       const tvaRepas = tarifs.tvaRepas;
-      const tvaPortage = (tarifs.tvaPortage != null) ? tarifs.tvaPortage : tvaRepas; // repli si facture antérieure à v1.0.4
-      const tvaEmporte = (tarifs.tvaEmporte != null) ? tarifs.tvaEmporte : tvaRepas;
 
       const libelleRepasSalle = `Repas en salle_Catégorie ${r.categorie != null ? r.categorie : ''}`;
       const loyerHT = (calc.loyer && calc.loyer.ht) || 0;
@@ -5107,13 +5147,15 @@ async function exportFacturationXLSX() {
       const cotisationTTC = (calc.cotisationRestaurant && calc.cotisationRestaurant.ttc) || 0;
       const adhesionTTC = (calc.adhesionAnnuelle && calc.adhesionAnnuelle.ttc * (calc.adhesionAnnuelle.qte||0)) || 0;
 
+      // Onglet 1 — Facturation : total, Prestation de base, hors Prestation de base
+      const montantTotal = f.montant_total || 0;
+
       const sSalle    = splitTTC(montants.repasSalleHT||0, tvaRepas);
       const sInvite   = splitTTC(montants.repasInviteHT||0, tvaRepas);
       const sPorte    = splitTTC(montants.plateauPorteHT||0, tvaRepas);   // combiné repas+portage, comme affiché à l'écran
       const sEmporte  = splitTTC(montants.plateauEmporteHT||0, tvaRepas); // combiné repas+supplément
       const sPotage   = splitTTC(montants.potageHT||0, tvaRepas);
       const sBoisson  = splitTTC((calc.totaux && calc.totaux.totBoisson) || 0, tvaRepas);
-      const sAmeliore = splitTTC(montants.ameliorHT||0, tvaRepas);
 
       const totaux = calc.totaux || {};
 
@@ -5132,6 +5174,35 @@ async function exportFacturationXLSX() {
         addLibelle(mois, l.libelle || '(sans libellé)', montantLigne, l.tva != null ? l.tva : 20, parseFloat(l.qte)||0);
       }
 
+      // v1.0.4 — correctif : le supplément "Repas amélioré" (montants.ameliorHT) fait partie du montant
+      // total facturé (calculMontantTotal) mais n'a pas de colonne dédiée dans cet export → il manquait
+      // à l'appel, créant un écart entre la somme des colonnes et "Total facturé". Consolidé dans "Autres".
+      montantAutres += (montants.ameliorHT || 0);
+
+      // v1.0.4 — filet de sécurité générique demandé par Marie : quel que soit le poste manquant
+      // (aujourd'hui ou dans une future évolution du calcul), tout écart résiduel entre le Total facturé
+      // et la somme des colonnes détaillées est absorbé dans "Autres services libres", pour que la
+      // formule de contrôle (somme de toutes les colonnes = Total facturé) soit TOUJOURS exacte.
+      const sommeColonnesDetaillees = loyerHT + chargesHT + prestaBaseTTC + cotisationTTC + adhesionTTC
+        + sSalle.ttc + sInvite.ttc + sPorte.ttc + sEmporte.ttc + sPotage.ttc + sBoisson.ttc
+        + montantLessive + montantPhotocopies + montantAutres;
+      const residu = montantTotal - sommeColonnesDetaillees;
+      if (Math.abs(residu) > 0.004) montantAutres += residu;
+
+      const horsPrestaBase = montantTotal - prestaBaseTTC;
+      onglet1Rows.push([
+        r.appt || '', r.nom || '', r.prenom || '',
+        +prestaBaseTTC.toFixed(2), +horsPrestaBase.toFixed(2), +montantTotal.toFixed(2),
+      ]);
+      totalGeneral += montantTotal;
+
+      // Onglet 4 — Prestation de base : montant par appartement + synthèse Solo/Couple
+      if (prestaBaseTTC) {
+        onglet4Rows.push([r.appt || '', r.nom || '', r.prenom || '', mois, +prestaBaseTTC.toFixed(2)]);
+        if (r.nb_residents === 2) totalPrestaCouple += prestaBaseTTC;
+        else totalPrestaSolo += prestaBaseTTC;
+      }
+
       onglet3Rows.push([
         r.appt || '', r.nom || '', r.prenom || '', mois,
         +loyerHT.toFixed(2), +chargesHT.toFixed(2), +prestaBaseTTC.toFixed(2), +cotisationTTC.toFixed(2), +adhesionTTC.toFixed(2),
@@ -5142,7 +5213,7 @@ async function exportFacturationXLSX() {
         +sPotage.ht.toFixed(2), +sPotage.tva.toFixed(2), +sPotage.ttc.toFixed(2),
         +sBoisson.ht.toFixed(2), +sBoisson.tva.toFixed(2), +sBoisson.ttc.toFixed(2),
         +montantLessive.toFixed(2), +montantPhotocopies.toFixed(2), +montantAutres.toFixed(2),
-        +(f.montant_total||0).toFixed(2),
+        +montantTotal.toFixed(2),
       ]);
 
       // Alimente l'onglet 2 avec les postes structurés (hors services libres déjà traités ci-dessus)
@@ -5165,7 +5236,9 @@ async function exportFacturationXLSX() {
       if (adhesionTTC) addLibelle(mois, 'Adhésion annuelle', adhesionTTC, 0, calc.adhesionAnnuelle && calc.adhesionAnnuelle.qte || 0);
     }
 
+    onglet1Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])));
     onglet3Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3])));
+    onglet4Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3])));
 
     const onglet2Rows = Object.values(parLibelle)
       .sort((a,b) => a.mois.localeCompare(b.mois) || a.libelle.localeCompare(b.libelle))
@@ -5175,14 +5248,16 @@ async function exportFacturationXLSX() {
       {
         name: 'Facturation',
         titleRow: `Total facturé — ${libellePeriode} : ${totalGeneral.toFixed(2)} €`,
-        headers: ['Appartement','Nom','Prénom','Montant facturé (€)'],
+        headers: ['Appartement','Nom','Prénom','Prestation de base (€)','Hors prestation de base (€)','Total facturé (€)'],
         rows: onglet1Rows,
+        moneyCols: [3,4,5],
       },
       {
         name: 'Par libellé Carte',
         titleRow: `Montants par libellé de la Carte — ${libellePeriode}`,
         headers: ['Mois','Libellé','Quantité','Montant HT (€)','Montant TVA (€)','Montant TTC (€)'],
         rows: onglet2Rows,
+        moneyCols: [3,4,5],
       },
       {
         name: 'Synthèse consommations',
@@ -5200,6 +5275,14 @@ async function exportFacturationXLSX() {
           'Total facturé (€)',
         ],
         rows: onglet3Rows,
+        moneyCols: [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29],
+      },
+      {
+        name: 'Prestation de base',
+        titleRow: `Prestation solo = ${totalPrestaSolo.toFixed(2)} €   |   Prestation couple = ${totalPrestaCouple.toFixed(2)} €`,
+        headers: ['Appartement','Nom','Prénom','Mois','Montant facturé (€)'],
+        rows: onglet4Rows,
+        moneyCols: [4],
       },
     ];
 
