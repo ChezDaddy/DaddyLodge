@@ -2645,13 +2645,19 @@ async function sauvegarderFacture() {
 
     // Persister les événements en base (dl_evenements) — supprimer les anciens puis réinsérer
     // pour refléter exactement l'état courant (ajouts + suppressions)
-    await sbDelete('dl_evenements',
-      `?maison_id=eq.${currentMaison.id}&resident_id=eq.${res.id}&mois=eq.${mois}`);
-    for (const ev of factEvenements) {
-      await sbInsert('dl_evenements', {
-        maison_id: currentMaison.id, resident_id: res.id, type: ev.type,
-        date_debut: ev.date_debut, date_fin: ev.date_fin, mois,
-      }).catch(()=>{});
+    // v1.0.4 — correctif : pour un appartement vacant, res.id vaut "vacant:{appt}" (chaîne), pas un
+    // identifiant bigint, et dl_evenements n'a pas de colonne appt_vacant (pas de résident à qui rattacher
+    // un jour off/hospi/logement non occupé). Sans ce garde-fou, l'appel plantait avec une erreur Postgres
+    // 22P02 ("invalid input syntax for type bigint") dès le DELETE, empêchant l'enregistrement de la facture.
+    if (!res._vacant) {
+      await sbDelete('dl_evenements',
+        `?maison_id=eq.${currentMaison.id}&resident_id=eq.${res.id}&mois=eq.${mois}`);
+      for (const ev of factEvenements) {
+        await sbInsert('dl_evenements', {
+          maison_id: currentMaison.id, resident_id: res.id, type: ev.type,
+          date_debut: ev.date_debut, date_fin: ev.date_fin, mois,
+        }).catch(()=>{});
+      }
     }
 
     toast(`Facture ${numero} enregistrée`, 'success');
