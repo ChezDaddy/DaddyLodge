@@ -2565,17 +2565,25 @@ async function genererNumeroFacture(res, mois) {
   // Format : {Maison}-{Appt}-{AAAA}{MM}{Rang}
   const [annee, moisNum] = mois.split('-');
   const base = `${currentMaison.id}-${res.appt}-${annee}${moisNum}`;
-  // Rang = 1 par défaut, incrémenté uniquement si plusieurs factures distinctes existent déjà pour ce résident+mois
-  // (cas rare : facture complémentaire). On vérifie l'existant pour déterminer le bon rang.
-  const filtreResident = res._vacant
-    ? `appt_vacant=eq.${res.appt}`
-    : `resident_id=eq.${res.id}`;
+  // v1.0.4 — correctif collision : le rang doit être unique par APPARTEMENT+MOIS, pas par résident.
+  // Cas réel : un résident sort et un autre entre dans le même appartement le même mois — chacun
+  // a un resident_id différent, donc l'ancienne recherche (filtrée par resident_id) ne trouvait jamais
+  // l'autre facture déjà enregistrée sous le même numéro de base, et les deux essayaient d'utiliser
+  // le même rang "1", provoquant une erreur 23505 (duplicate key) à l'enregistrement du second.
+  // On recherche donc désormais TOUTES les factures du mois dont le numéro commence par cette base
+  // (tous résidents/appt_vacant confondus) pour déterminer le prochain rang disponible.
   try {
-    const existantes = await sbSelect('dl_factures',
-      `?maison_id=eq.${currentMaison.id}&${filtreResident}&mois=eq.${mois}&order=numero.desc`);
-    if (!existantes || !existantes.length) return base + '1';
-    // Une facture existe déjà pour ce mois — on garde son numéro (la modification ne change pas le numéro)
-    return existantes[0].numero;
+    const existantesAppt = await sbSelect('dl_factures',
+      `?maison_id=eq.${currentMaison.id}&mois=eq.${mois}&numero=like.${encodeURIComponent(base)}*&order=numero.desc`);
+    if (!existantesAppt || !existantesAppt.length) return base + '1';
+    // Rang max déjà utilisé pour cette base (suffixe numérique après la base) + 1
+    let rangMax = 0;
+    for (const f of existantesAppt) {
+      const suffixe = f.numero.slice(base.length);
+      const n = parseInt(suffixe, 10);
+      if (!isNaN(n) && n > rangMax) rangMax = n;
+    }
+    return base + (rangMax + 1);
   } catch(e) {
     return base + '1';
   }
