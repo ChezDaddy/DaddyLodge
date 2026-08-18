@@ -2112,9 +2112,13 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
   const totPotage         = repasMois.reduce((s,r) => s + (r.potage||0), 0);
   const totBoisson        = repasMois.reduce((s,r) => s + (parseFloat(r.boisson_eur)||0), 0);
 
-  // Repas amélioré : nb de jours "repas amélioré" du mois où le résident a effectivement mangé
+  // Repas amélioré : nb de REPAS (pas de jours) éligibles, sur les jours "repas amélioré" du mois
   // v1.0.3 — correctif : s'applique désormais quel que soit le type de repas pris ce jour-là
   // (Salle, Plateau porté ou Plateau emporté) — auparavant limité au seul Repas salle.
+  // v1.0.4 — correctif : Repas Invité déclenche également le supplément.
+  // v1.0.4 — correctif : le supplément est compté par REPAS (quantité), pas par jour. Un jour "repas amélioré"
+  // avec 1 repas salle + 2 repas invités compte pour 3 suppléments, pas 1 (repas_salle/repas_invite/plateau_porte/
+  // plateau_emporte sont des quantités, pas des indicateurs 0/1 — cf. saisie semaine).
   const repasByDate = {};
   for (const r of repasMois) repasByDate[r.date] = r;
   let nbRepasAmeliore = 0;
@@ -2122,8 +2126,7 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
   for (const j of (joursAmeliore||[])) {
     const dateStr = `${anneeFact}-${String(moisFact).padStart(2,'0')}-${String(j).padStart(2,'0')}`;
     const r = repasByDate[dateStr];
-    const aMangeCeJour = r && ((r.repas_salle||0) + (r.plateau_porte||0) + (r.plateau_emporte||0)) > 0;
-    if (aMangeCeJour) nbRepasAmeliore++;
+    if (r) nbRepasAmeliore += (r.repas_salle||0) + (r.repas_invite||0) + (r.plateau_porte||0) + (r.plateau_emporte||0);
   }
 
   // ----- Tarifs carte -----
@@ -2367,7 +2370,7 @@ function buildTableGauche(repasMois, mois, calc, printMode) {
       Ligne orange = jour "repas amélioré" paramétré pour le mois
       <span style="margin-left:10px"><span style="color:#000">★</span> : repas amélioré</span>
     </div>
-    ${t.nbRepasAmeliore > 0 ? `<div style="margin-top:8px;font-size:11px"><strong>Repas amélioré :</strong> ${t.nbRepasAmeliore} jour(s) — ${fmt2(calc.montants.ameliorHT)}€ TTC</div>` : ''}`}
+    ${t.nbRepasAmeliore > 0 ? `<div style="margin-top:8px;font-size:11px"><strong>Repas amélioré :</strong> ${t.nbRepasAmeliore} repas — ${fmt2(calc.montants.ameliorHT)}€ TTC</div>` : ''}`}
   `;
 }
 
@@ -5129,6 +5132,49 @@ async function exportFacturationXLSX() {
     let totalGeneral = 0, totalPrestaSolo = 0, totalPrestaCouple = 0;
 
     // ---------- Onglet 3 : synthèse détaillée par appartement + mois ----------
+    // v1.0.4 — refonte : colonnes dynamiques reprenant tous les items de la Carte (+ services libres)
+    // réellement présents sur la période. Chaque item taxé (TVA > 0 sur sa fiche Carte) reçoit 3 colonnes
+    // HT/TVA/TTC ; chaque item non taxé (Loyer, Charges, Prestation de base, Adhésion annuelle) reçoit une
+    // seule colonne. Le Total est la somme pure de toutes ces colonnes — plus aucune case d'ajustement.
+    // Pré-passe : détecter les services libres réellement utilisés sur la période (libellé + TVA)
+    const servicesLibresVus = {}; // libellé normalisé -> { libelle (affiché), tvaNonNulle }
+    for (const f of factures) {
+      const c = f.contenu || {};
+      for (const l of (c.lignesLibres || [])) {
+        const libelle = l.libelle || '(sans libellé)';
+        const norm = normaliserLibelleCarte(libelle);
+        if (!servicesLibresVus[norm]) servicesLibresVus[norm] = { libelle, tvaNonNulle: false };
+        if ((l.tva||0) > 0) servicesLibresVus[norm].tvaNonNulle = true;
+      }
+    }
+    const colonnesServicesLibres = Object.values(servicesLibresVus).sort((a,b) => a.libelle.localeCompare(b.libelle));
+
+    // Définition des colonnes fixes (dans l'ordre d'affichage)
+    const colDefs = [
+      { key:'loyer', label:'Loyer', taxe:false },
+      { key:'charges', label:'Charges', taxe:false },
+      { key:'prestaBase', label:'Prestation de base', taxe:false },
+      { key:'cotisation', label:'Cotisation Restaurant', taxe:true },
+      { key:'adhesion', label:'Adhésion annuelle', taxe:false },
+      { key:'repasSalle', label:'Repas salle', taxe:true },
+      { key:'repasInvite', label:'Repas Invité', taxe:true },
+      { key:'plateauPorte', label:'Plateau porté', taxe:true },
+      { key:'plateauEmporte', label:'Plateau emporté', taxe:true },
+      { key:'potage', label:'Potage', taxe:true },
+      { key:'boisson', label:'Boisson', taxe:true },
+      { key:'repasAmeliore', label:'Repas amélioré', taxe:true },
+      ...colonnesServicesLibres.map(sl => ({ key:'sl:'+normaliserLibelleCarte(sl.libelle), label: sl.libelle, taxe: sl.tvaNonNulle })),
+    ];
+
+    const onglet3Headers = ['Appartement','Nom','Prénom','Mois'];
+    colDefs.forEach(cd => {
+      if (cd.taxe) onglet3Headers.push(`${cd.label} HT`, `${cd.label} TVA`, `${cd.label} TTC`);
+      else onglet3Headers.push(`${cd.label} (€)`);
+    });
+    onglet3Headers.push('Total facturé (€)');
+    const onglet3MoneyCols = [];
+    for (let i = 4; i < onglet3Headers.length; i++) onglet3MoneyCols.push(i);
+
     const onglet3Rows = [];
 
     for (const f of factures) {
@@ -5141,54 +5187,44 @@ async function exportFacturationXLSX() {
       const tvaRepas = tarifs.tvaRepas;
 
       const libelleRepasSalle = `Repas en salle_Catégorie ${r.categorie != null ? r.categorie : ''}`;
-      const loyerHT = (calc.loyer && calc.loyer.ht) || 0;
-      const chargesHT = (calc.charges && calc.charges.ht) || 0;
+      // v1.0.4 — respecter les cases "Facturer loyer"/"Facturer charges" : 0€ si décochées, comme à l'écran
+      const facturerLoyer = calc.facturerLoyer !== false;
+      const facturerCharges = calc.facturerCharges !== false;
+      const loyerTTC = facturerLoyer ? ((calc.loyer && calc.loyer.ht) || 0) : 0;
+      const chargesTTC = facturerCharges ? ((calc.charges && calc.charges.ht) || 0) : 0;
       const prestaBaseTTC = (calc.prestaBase && calc.prestaBase.ttc * (calc.prestaBase.qte||1)) || 0;
       const cotisationTTC = (calc.cotisationRestaurant && calc.cotisationRestaurant.ttc) || 0;
       const adhesionTTC = (calc.adhesionAnnuelle && calc.adhesionAnnuelle.ttc * (calc.adhesionAnnuelle.qte||0)) || 0;
-
-      // Onglet 1 — Facturation : total, Prestation de base, hors Prestation de base
       const montantTotal = f.montant_total || 0;
 
+      const sCotisation = splitTTC(cotisationTTC, tvaRepas);
       const sSalle    = splitTTC(montants.repasSalleHT||0, tvaRepas);
       const sInvite   = splitTTC(montants.repasInviteHT||0, tvaRepas);
       const sPorte    = splitTTC(montants.plateauPorteHT||0, tvaRepas);   // combiné repas+portage, comme affiché à l'écran
       const sEmporte  = splitTTC(montants.plateauEmporteHT||0, tvaRepas); // combiné repas+supplément
       const sPotage   = splitTTC(montants.potageHT||0, tvaRepas);
       const sBoisson  = splitTTC((calc.totaux && calc.totaux.totBoisson) || 0, tvaRepas);
+      const sAmeliore = splitTTC(montants.ameliorHT||0, tvaRepas);
 
       const totaux = calc.totaux || {};
 
-      // Lignes libres : on isole Lessive et Photocopies, le reste part dans "Autres"
-      const lignesLibres = c.lignesLibres || [];
-      let montantLessive = 0, montantPhotocopies = 0, montantAutres = 0;
-      const cibleLessive = normaliserLibelleCarte('Lessive (Jeton)');
-      const ciblePhotocopies = normaliserLibelleCarte('Photocopies');
-      for (const l of lignesLibres) {
+      // Valeurs par clé de colonne fixe (montant TTC ou montant simple selon le cas)
+      const valeurs = {
+        loyer: loyerTTC, charges: chargesTTC, prestaBase: prestaBaseTTC, adhesion: adhesionTTC,
+        cotisation: sCotisation, repasSalle: sSalle, repasInvite: sInvite,
+        plateauPorte: sPorte, plateauEmporte: sEmporte, potage: sPotage, boisson: sBoisson, repasAmeliore: sAmeliore,
+      };
+
+      // Services libres de CETTE facture, répartis par colonne détectée en pré-passe
+      const montantsServicesLibres = {}; // clé colonne -> montant TTC cumulé
+      for (const l of (c.lignesLibres || [])) {
         const montantLigne = (parseFloat(l.pu)||0) * (parseFloat(l.qte)||0);
-        const norm = normaliserLibelleCarte(l.libelle || '');
-        if (norm === cibleLessive) montantLessive += montantLigne;
-        else if (norm === ciblePhotocopies) montantPhotocopies += montantLigne;
-        else montantAutres += montantLigne;
-        // Onglet 2 : chaque libellé de service libre, y compris Lessive/Photocopies
-        addLibelle(mois, l.libelle || '(sans libellé)', montantLigne, l.tva != null ? l.tva : 20, parseFloat(l.qte)||0);
+        const norm = normaliserLibelleCarte(l.libelle || '(sans libellé)');
+        const key = 'sl:' + norm;
+        montantsServicesLibres[key] = (montantsServicesLibres[key] || 0) + montantLigne;
       }
 
-      // v1.0.4 — correctif : le supplément "Repas amélioré" (montants.ameliorHT) fait partie du montant
-      // total facturé (calculMontantTotal) mais n'a pas de colonne dédiée dans cet export → il manquait
-      // à l'appel, créant un écart entre la somme des colonnes et "Total facturé". Consolidé dans "Autres".
-      montantAutres += (montants.ameliorHT || 0);
-
-      // v1.0.4 — filet de sécurité générique demandé par Marie : quel que soit le poste manquant
-      // (aujourd'hui ou dans une future évolution du calcul), tout écart résiduel entre le Total facturé
-      // et la somme des colonnes détaillées est absorbé dans "Autres services libres", pour que la
-      // formule de contrôle (somme de toutes les colonnes = Total facturé) soit TOUJOURS exacte.
-      const sommeColonnesDetaillees = loyerHT + chargesHT + prestaBaseTTC + cotisationTTC + adhesionTTC
-        + sSalle.ttc + sInvite.ttc + sPorte.ttc + sEmporte.ttc + sPotage.ttc + sBoisson.ttc
-        + montantLessive + montantPhotocopies + montantAutres;
-      const residu = montantTotal - sommeColonnesDetaillees;
-      if (Math.abs(residu) > 0.004) montantAutres += residu;
-
+      // Onglet 1 — Facturation : total, Prestation de base, hors Prestation de base
       const horsPrestaBase = montantTotal - prestaBaseTTC;
       onglet1Rows.push([
         r.appt || '', r.nom || '', r.prenom || '',
@@ -5203,20 +5239,44 @@ async function exportFacturationXLSX() {
         else totalPrestaSolo += prestaBaseTTC;
       }
 
-      onglet3Rows.push([
-        r.appt || '', r.nom || '', r.prenom || '', mois,
-        +loyerHT.toFixed(2), +chargesHT.toFixed(2), +prestaBaseTTC.toFixed(2), +cotisationTTC.toFixed(2), +adhesionTTC.toFixed(2),
-        +sSalle.ht.toFixed(2), +sSalle.tva.toFixed(2), +sSalle.ttc.toFixed(2),
-        +sInvite.ht.toFixed(2), +sInvite.tva.toFixed(2), +sInvite.ttc.toFixed(2),
-        +sPorte.ht.toFixed(2), +sPorte.tva.toFixed(2), +sPorte.ttc.toFixed(2),
-        +sEmporte.ht.toFixed(2), +sEmporte.tva.toFixed(2), +sEmporte.ttc.toFixed(2),
-        +sPotage.ht.toFixed(2), +sPotage.tva.toFixed(2), +sPotage.ttc.toFixed(2),
-        +sBoisson.ht.toFixed(2), +sBoisson.tva.toFixed(2), +sBoisson.ttc.toFixed(2),
-        +montantLessive.toFixed(2), +montantPhotocopies.toFixed(2), +montantAutres.toFixed(2),
-        +montantTotal.toFixed(2),
-      ]);
+      // Construction de la ligne Onglet 3, colonne par colonne, dans l'ordre de colDefs
+      const row = [r.appt || '', r.nom || '', r.prenom || '', mois];
+      let totalLigne = 0;
+      colDefs.forEach(cd => {
+        if (cd.key.startsWith('sl:')) {
+          const montant = montantsServicesLibres[cd.key] || 0;
+          if (cd.taxe) {
+            const sl = colonnesServicesLibres.find(x => 'sl:'+normaliserLibelleCarte(x.libelle) === cd.key);
+            // TVA du service libre : reprise de la ligne d'origine si connue, sinon 20% par défaut
+            let tvaLigne = 20;
+            for (const l of (c.lignesLibres || [])) {
+              if (normaliserLibelleCarte(l.libelle||'') === cd.key.slice(3) && l.tva != null) { tvaLigne = l.tva; break; }
+            }
+            const s = splitTTC(montant, tvaLigne);
+            row.push(+s.ht.toFixed(2), +s.tva.toFixed(2), +s.ttc.toFixed(2));
+            totalLigne += s.ttc;
+          } else {
+            row.push(+montant.toFixed(2));
+            totalLigne += montant;
+          }
+        } else if (cd.taxe) {
+          const s = valeurs[cd.key];
+          row.push(+s.ht.toFixed(2), +s.tva.toFixed(2), +s.ttc.toFixed(2));
+          totalLigne += s.ttc;
+        } else {
+          const v = valeurs[cd.key];
+          row.push(+v.toFixed(2));
+          totalLigne += v;
+        }
+      });
+      row.push(+totalLigne.toFixed(2));
+      onglet3Rows.push(row);
 
-      // Alimente l'onglet 2 avec les postes structurés (hors services libres déjà traités ci-dessus)
+      // Alimente l'onglet 2 avec les postes structurés
+      for (const l of (c.lignesLibres || [])) {
+        const montantLigne = (parseFloat(l.pu)||0) * (parseFloat(l.qte)||0);
+        addLibelle(mois, l.libelle || '(sans libellé)', montantLigne, l.tva != null ? l.tva : 20, parseFloat(l.qte)||0);
+      }
       addLibelle(mois, libelleRepasSalle, montants.repasSalleHT||0, tvaRepas, totaux.totRepasSalle||0);
       addLibelle(mois, 'Repas Invité', montants.repasInviteHT||0, tvaRepas, totaux.totRepasInvite||0);
       addLibelle(mois, 'Plateau porté (repas + supplément)', montants.plateauPorteHT||0, tvaRepas, totaux.totPlateauPorte||0);
@@ -5262,20 +5322,9 @@ async function exportFacturationXLSX() {
       {
         name: 'Synthèse consommations',
         titleRow: `Synthèse des consommations par appartement — ${libellePeriode}`,
-        headers: [
-          'Appartement','Nom','Prénom','Mois',
-          'Loyer (€)','Charges (€)','Prestation de base (€)','Cotisation repas (€)','Adhésion annuelle (€)',
-          'Repas salle HT','Repas salle TVA','Repas salle TTC',
-          'Repas Invité HT','Repas Invité TVA','Repas Invité TTC',
-          'Plat. porté HT','Plat. porté TVA','Plat. porté TTC',
-          'Plat. emporté HT','Plat. emporté TVA','Plat. emporté TTC',
-          'Potage HT','Potage TVA','Potage TTC',
-          'Boisson HT','Boisson TVA','Boisson TTC',
-          'Jetons Lessive (€)','Photocopies (€)','Autres services libres (€)',
-          'Total facturé (€)',
-        ],
+        headers: onglet3Headers,
         rows: onglet3Rows,
-        moneyCols: [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29],
+        moneyCols: onglet3MoneyCols,
       },
       {
         name: 'Prestation de base',
