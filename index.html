@@ -370,7 +370,7 @@
     </div>
     <button class="btn-login" onclick="doLogin()">Se connecter</button>
     <div class="login-error" id="login-error">Identifiant ou mot de passe incorrect.</div>
-    <div class="login-version">v1.0.4 — Août 2026</div>
+    <div class="login-version">v1.0.5 — Août 2026</div>
   </div>
 </div>
 
@@ -2267,8 +2267,8 @@ function buildTableGauche(repasMois, mois, calc, printMode) {
     const estAmeliore = (factJoursAmeliore||[]).includes(j);
     const rowStyle = estAmeliore ? 'background:#fdf0d8' : (weekend ? 'background:#f7f7f7' : '');
     rows += `<tr style="${rowStyle}">
-      <td style="text-align:center;font-weight:600;width:24px">${jourLettre}${estAmeliore?' <span title="Repas amélioré" style="color:#000">★</span>':''}</td>
-      <td style="text-align:center;width:28px">${j}</td>
+      <td style="text-align:center;font-weight:600;width:18px">${jourLettre}${estAmeliore?' <span title="Repas amélioré" style="color:#000">★</span>':''}</td>
+      <td style="text-align:center;width:20px">${j}</td>
       <td style="text-align:center">${r.repas_salle ? r.repas_salle : '-'}</td>
       <td style="text-align:center">${r.repas_invite ? r.repas_invite : '-'}</td>
       <td style="text-align:center">${r.plateau_porte ? r.plateau_porte : '-'}</td>
@@ -2285,10 +2285,20 @@ function buildTableGauche(repasMois, mois, calc, printMode) {
   // cf. Spéc. Technique §2.4). Le vrai HT s'obtient en divisant par tvaMult, pas en multipliant.
   // v1.0.3 — Plateau emporté est désormais branché au moteur de calcul (PU repas + supplément "Plateau à emporter"),
   // au lieu d'être figé à 0.00€ (limitation connue en v1.0.2/v1.0.3, cf. Spéc. Technique §10).
-  // v1.0.2 — en impression, le pied de tableau est réduit à la seule ligne "Montant TTC"
+  // v1.0.5 — à la demande de Marie, la ligne de quantités ("Total") réapparaît aussi à l'impression,
+  // en plus de la ligne "Montant TTC" (les deux étaient réduites à la seule ligne Montant TTC depuis la v1.0.2).
   const tfootHTML = printMode ? `
       <tfoot>
-        <tr style="background:#f5f5f5;font-weight:700">
+        <tr style="font-weight:700;background:#eee;font-size:12pt">
+          <td colspan="2">Nb total</td>
+          <td style="text-align:center">${t.totRepasSalle}</td>
+          <td style="text-align:center">${t.totRepasInvite}</td>
+          <td style="text-align:center">${t.totPlateauPorte}</td>
+          <td style="text-align:center">${t.totPlateauEmporte}</td>
+          <td style="text-align:center">${t.totPotage}</td>
+          <td style="text-align:center">--</td>
+        </tr>
+        <tr style="background:#f5f5f5;font-weight:700;font-size:12pt">
           <td colspan="2">Montant TTC</td>
           <td style="text-align:center">${fmt2(calc.montants.repasSalleHT)}€</td>
           <td style="text-align:center">${fmt2(calc.montants.repasInviteHT)}€</td>
@@ -2347,9 +2357,14 @@ function buildTableGauche(repasMois, mois, calc, printMode) {
       </tfoot>`;
 
   return `
-    <table style="width:100%;border-collapse:collapse;font-size:${printMode?'10px':'11px'}" class="fact-table-gauche">
+    <table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:${printMode?'12pt':'11px'}" class="fact-table-gauche">
+      ${printMode ? `<colgroup>
+        <col style="width:9%"><col style="width:14%">
+        <col style="width:14%"><col style="width:12%"><col style="width:13%">
+        <col style="width:13%"><col style="width:12%"><col style="width:13%">
+      </colgroup>` : ''}
       <thead>
-        <tr style="background:#333;color:white">
+        <tr style="background:#333;color:white${printMode?';font-size:12pt' : ''}">
           <th colspan="2" style="padding:4px">Jour</th>
           <th style="padding:4px">Repas salle</th>
           <th style="padding:4px">Invité</th>
@@ -2402,7 +2417,10 @@ function buildTableDroite(res, calc, printMode) {
       <button type="button" class="btn btn-secondary btn-sm" onclick="addLigneLibre()">+ Ajouter</button>
     </div>`;
   return `
-    <table style="width:100%;border-collapse:collapse;font-size:${printMode?'11px':'12px'}" class="fact-table-droite">
+    <table style="${printMode ? 'width:auto;max-width:540px' : 'width:100%'};border-collapse:collapse;font-size:${printMode?'12pt':'12px'}" class="fact-table-droite">
+      ${printMode ? `<colgroup>
+        <col style="width:270px"><col style="width:90px"><col style="width:70px"><col style="width:110px">
+      </colgroup>` : ''}
       <thead>
         <tr style="background:#333;color:white">
           <th style="padding:5px;text-align:left">Services</th>
@@ -2848,10 +2866,11 @@ async function imprimerFacturesMois() {
       @page { size: A4 landscape; margin: 8mm; }
       .no-print { display: none !important; }
       * { font-family: Calibri, Arial, sans-serif; }
-      body{font-size:11px;padding:0;color:#000}
+      body{font-size:12pt;padding:0;color:#000}
       table{width:100%;border-collapse:collapse}
-      th{padding:3px 6px}
-      td{padding:3px 6px}
+      th{padding:4px 7px}
+      td{padding:4px 7px}
+      .fact-table-gauche th, .fact-table-gauche td{padding:3px 2px}
       .fact-page{page-break-after:always}
       .fact-page:last-child{page-break-after:auto}
     </style></head><body>${pagesHtml}</body></html>`);
@@ -2905,13 +2924,13 @@ function buildFacturePageHTML({ mention, numero, moisLabel, res, gaucheHtml, dro
 
   const enteteHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-      <div style="font-size:9px;color:#555;max-width:55%">${mention || ''}</div>
+      <div style="font-size:12pt;color:#555;max-width:55%">${mention || ''}</div>
       <div style="text-align:right">
-        <div style="font-size:15px;font-weight:700">Facture n° ${numero}</div>
-        <div style="font-size:10px;color:#555">${moisLabel}</div>
+        <div style="font-size:12pt;font-weight:700">Facture n° ${numero}</div>
+        <div style="font-size:12pt;color:#555">${moisLabel}</div>
       </div>
     </div>
-    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;font-size:11px;line-height:1.5">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;font-size:12pt;line-height:1.6">
       <div>
         <div><strong>Mois :</strong> <span style="color:#c0392b">${moisLabel}</span></div>
         <div><strong>Résident :</strong> <span style="color:#c0392b">${nomPrenom.toUpperCase()}</span></div>
@@ -2928,25 +2947,26 @@ function buildFacturePageHTML({ mention, numero, moisLabel, res, gaucheHtml, dro
     </div>
     <div style="border-top:2px solid #2980b9;margin-bottom:12px"></div>`;
   const commentairesHTML = commentaires
-    ? `<div style="margin-top:14px;padding:8px 10px;background:#fff8dc;border:1px solid #e6d78a;border-radius:6px;font-size:10px"><strong>Commentaires :</strong> ${commentaires}</div>`
+    ? `<div style="margin-top:14px;padding:8px 10px;background:#fff8dc;border:1px solid #e6d78a;border-radius:6px;font-size:12pt"><strong>Commentaires :</strong> ${commentaires}</div>`
     : '';
   return `<html><head><meta charset="utf-8"><title>${title}</title>
     <style>
       @page { size: A4 landscape; margin: 8mm; }
       .no-print { display: none !important; }
       * { font-family: Calibri, Arial, sans-serif; }
-      body{font-size:11px;padding:0;color:#000}
+      body{font-size:12pt;padding:0;color:#000}
       table{width:100%;border-collapse:collapse}
-      th{padding:3px 6px}
-      td{padding:3px 6px}
+      th{padding:4px 7px}
+      td{padding:4px 7px}
+      .fact-table-gauche th, .fact-table-gauche td{padding:3px 2px}
       .fact-page{page-break-after:always;position:relative;min-height:194mm}
       .fact-page:last-child{page-break-after:auto}
     </style></head><body>
     <div class="fact-page">
       ${enteteHTML}
       <div style="display:flex;gap:12px;align-items:flex-start">
-        <div style="flex:1.3;min-width:0">${gaucheHtml}</div>
-        <div style="flex:1;min-width:0">${carteHtml||''}${droiteHtml}${commentairesHTML}</div>
+        <div style="flex:2;min-width:0">${gaucheHtml}</div>
+        <div style="flex:3;min-width:0">${carteHtml||''}${droiteHtml}${commentairesHTML}</div>
       </div>
     </div>
   </body></html>`;
@@ -2978,20 +2998,23 @@ async function buildCarteExtraitHTML(res, mois) {
   if (!rows.length) return '';
   return `
     <div style="margin-bottom:24px">
-      <div style="font-weight:700;font-size:12px;margin-bottom:4px">Carte des prestations</div>
-      <table style="width:100%;border-collapse:collapse;font-size:10px">
+      <div style="font-weight:700;font-size:12pt;margin-bottom:4px">Carte des prestations</div>
+      <table style="width:auto;max-width:480px;border-collapse:collapse;font-size:12pt">
+        <colgroup>
+          <col style="width:280px"><col style="width:100px"><col style="width:100px">
+        </colgroup>
         <thead>
           <tr style="background:#333;color:white">
-            <th style="padding:3px 6px;text-align:left">Libellé</th>
-            <th style="padding:3px 6px">Prix (≤N)</th>
-            <th style="padding:3px 6px">Prix (&gt;N)</th>
+            <th style="padding:4px 6px;text-align:left">Libellé</th>
+            <th style="padding:4px 6px">Prix (≤N)</th>
+            <th style="padding:4px 6px">Prix (&gt;N)</th>
           </tr>
         </thead>
         <tbody>
           ${rows.map(r => `<tr>
-            <td style="padding:3px 6px">${r.libelle}</td>
-            <td style="text-align:center;padding:3px 6px">${r.prix1!=null?fmt2(r.prix1)+'€':'--'}</td>
-            <td style="text-align:center;padding:3px 6px">${r.prix2!=null?fmt2(r.prix2)+'€':'--'}</td>
+            <td style="padding:4px 6px">${r.libelle}</td>
+            <td style="text-align:center;padding:4px 6px">${r.prix1!=null?fmt2(r.prix1)+'€':'--'}</td>
+            <td style="text-align:center;padding:4px 6px">${r.prix2!=null?fmt2(r.prix2)+'€':'--'}</td>
           </tr>`).join('')}
         </tbody>
       </table>
@@ -4901,29 +4924,34 @@ function xmlEscape(s) {
 }
 
 function buildSheetXML(titleRow, headers, rows, moneyCols) {
-  // titleRow: string affichée en ligne 1 (fusionnée visuellement via simple texte)
-  // headers: array de libellés colonnes (ligne 2)
+  // titleRow: string (une ligne de titre) OU array de strings (plusieurs lignes de titre empilées)
+  // headers: array de libellés colonnes (juste après la/les ligne(s) de titre)
   // rows: array de arrays de valeurs (lignes suivantes)
   // moneyCols: Set (ou array) d'index de colonnes à formater avec 2 décimales fixes (style s="1")
   const money = moneyCols instanceof Set ? moneyCols : new Set(moneyCols || []);
+  const titres = Array.isArray(titleRow) ? titleRow : [titleRow];
   let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <sheetData>`;
 
-  // Ligne 1 : titre
-  xml += `<row r="1"><c r="A1" t="inlineStr" s="2"><is><t>${xmlEscape(titleRow)}</t></is></c></row>`;
+  // Ligne(s) 1..N : titre(s)
+  titres.forEach((t, i) => {
+    const rowNum = i + 1;
+    xml += `<row r="${rowNum}"><c r="A${rowNum}" t="inlineStr" s="2"><is><t>${xmlEscape(t)}</t></is></c></row>`;
+  });
 
-  // Ligne 2 : headers
-  xml += `<row r="2">`;
+  // Ligne suivante : headers
+  const headerRowNum = titres.length + 1;
+  xml += `<row r="${headerRowNum}">`;
   headers.forEach((h, i) => {
     const col = colLetter(i);
-    xml += `<c r="${col}2" t="inlineStr" s="2"><is><t>${xmlEscape(h)}</t></is></c>`;
+    xml += `<c r="${col}${headerRowNum}" t="inlineStr" s="2"><is><t>${xmlEscape(h)}</t></is></c>`;
   });
   xml += `</row>`;
 
   // Lignes de données
   rows.forEach((row, rIdx) => {
-    const rowNum = rIdx + 3;
+    const rowNum = rIdx + headerRowNum + 1;
     xml += `<row r="${rowNum}">`;
     row.forEach((val, cIdx) => {
       const col = colLetter(cIdx);
@@ -5112,6 +5140,17 @@ async function exportFacturationXLSX() {
       ? `Année ${annee}`
       : `${MOIS_LONG[parseInt(document.getElementById('fact-extract-mois').value)-1]} ${annee}`;
 
+    // v1.0.5 — la Prestation de base concerne le mois SUIVANT le mois facturé : on l'indique dans
+    // l'en-tête de colonne de l'onglet Facturation. En export annuel, le mois suivant varie ligne à
+    // ligne (Décembre -> Janvier de l'année suivante compris) : on reste générique dans ce cas.
+    const libelleMoisSuivant = (() => {
+      if (periode === 'annee') return 'mois suivant';
+      const m = parseInt(document.getElementById('fact-extract-mois').value);
+      const mSuivant = (m % 12) + 1;
+      const anneeSuivante = (m === 12) ? annee + 1 : annee;
+      return `${MOIS_LONG[mSuivant-1]} ${anneeSuivante}`;
+    })();
+
     // ---------- Onglet 2 : par libellé de la Carte (et par mois), Quantité + HT / TVA / TTC ----------
     // clé = mois + '|' + libellé
     const parLibelle = {};
@@ -5296,9 +5335,10 @@ async function exportFacturationXLSX() {
       if (adhesionTTC) addLibelle(mois, 'Adhésion annuelle', adhesionTTC, 0, calc.adhesionAnnuelle && calc.adhesionAnnuelle.qte || 0);
     }
 
-    onglet1Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])));
-    onglet3Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3])));
-    onglet4Rows.sort((a,b) => String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3])));
+    // v1.0.5 — tri par défaut par NOM (puis Prénom, puis Mois), à la demande de Marie — auparavant par Appartement
+    onglet1Rows.sort((a,b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])));
+    onglet3Rows.sort((a,b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])) || String(a[3]).localeCompare(String(b[3])));
+    onglet4Rows.sort((a,b) => String(a[1]).localeCompare(String(b[1])) || String(a[2]).localeCompare(String(b[2])) || String(a[3]).localeCompare(String(b[3])));
 
     const onglet2Rows = Object.values(parLibelle)
       .sort((a,b) => a.mois.localeCompare(b.mois) || a.libelle.localeCompare(b.libelle))
@@ -5308,7 +5348,7 @@ async function exportFacturationXLSX() {
       {
         name: 'Facturation',
         titleRow: `Total facturé — ${libellePeriode} : ${totalGeneral.toFixed(2)} €`,
-        headers: ['Appartement','Nom','Prénom','Prestation de base (€)','Hors prestation de base (€)','Total facturé (€)'],
+        headers: ['Appartement','Nom','Prénom',`Prestation de base (${libelleMoisSuivant}) (€)`,'Hors prestation de base (€)','Total facturé (€)'],
         rows: onglet1Rows,
         moneyCols: [3,4,5],
       },
@@ -5328,7 +5368,10 @@ async function exportFacturationXLSX() {
       },
       {
         name: 'Prestation de base',
-        titleRow: `Prestation solo = ${totalPrestaSolo.toFixed(2)} €   |   Prestation couple = ${totalPrestaCouple.toFixed(2)} €`,
+        titleRow: [
+          `Total Prestation de base — ${libellePeriode} : ${(totalPrestaSolo + totalPrestaCouple).toFixed(2)} €`,
+          `Prestation solo = ${totalPrestaSolo.toFixed(2)} €   |   Prestation couple = ${totalPrestaCouple.toFixed(2)} €`,
+        ],
         headers: ['Appartement','Nom','Prénom','Mois','Montant facturé (€)'],
         rows: onglet4Rows,
         moneyCols: [4],
