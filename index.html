@@ -370,7 +370,7 @@
     </div>
     <button class="btn-login" onclick="doLogin()">Se connecter</button>
     <div class="login-error" id="login-error">Identifiant ou mot de passe incorrect.</div>
-    <div class="login-version">v1.0.5 — Août 2026</div>
+    <div class="login-version">v1.0.6 — Août 2026</div>
   </div>
 </div>
 
@@ -2069,8 +2069,21 @@ function normaliserLibelleCarte(s) {
     .trim();
 }
 
+// v1.0.6 — cache mémoire optionnel pour getTarifCarte : l'impression groupée l'active le temps de sa
+// génération, car la Carte des prestations d'une maison est la même pour tous ses résidents sur un mois
+// donné. Sans ce cache, chaque résident redéclenchait ~10 requêtes réseau (une par tarif nécessaire, dans
+// calculSection3 ET dans buildCarteExtraitHTML) — avec 30 résidents facturés, cela pouvait représenter
+// plusieurs centaines de requêtes séquentielles, donnant l'impression que l'impression groupée est bloquée.
+let tarifCarteCacheActive = false;
+let tarifCarteCache = {};
+
 async function getTarifCarte(libelle, mois) {
+  const cacheKey = tarifCarteCacheActive ? `${currentMaison.id}|${libelle}|${mois}` : null;
+  if (cacheKey && Object.prototype.hasOwnProperty.call(tarifCarteCache, cacheKey)) {
+    return tarifCarteCache[cacheKey];
+  }
   // Recherche la prestation par libellé exact, valide pour le mois facturé
+  let resultat = null;
   try {
     let data = await sbSelect('dl_carte',
       `?maison_id=eq.${currentMaison.id}&libelle=eq.${encodeURIComponent(libelle)}&order=id&limit=20`);
@@ -2085,10 +2098,14 @@ async function getTarifCarte(libelle, mois) {
       data = (toutesLignes || []).filter(c => normaliserLibelleCarte(c.libelle) === cible);
     }
 
-    if (!data || !data.length) return null;
-    const valide = data.find(c => (!c.mois_debut || c.mois_debut <= mois) && (!c.mois_fin || c.mois_fin >= mois));
-    return valide || data[0];
-  } catch(e) { return null; }
+    if (data && data.length) {
+      const valide = data.find(c => (!c.mois_debut || c.mois_debut <= mois) && (!c.mois_fin || c.mois_fin >= mois));
+      resultat = valide || data[0];
+    }
+  } catch(e) { resultat = null; }
+
+  if (cacheKey) tarifCarteCache[cacheKey] = resultat;
+  return resultat;
 }
 
 function nbJoursDansMois(mois) {
@@ -2240,8 +2257,8 @@ async function calculSection3(res, mois, repasMois, evenements, joursAmeliore) {
     },
     loyer: { ht: loyerHT, prorataQte },
     charges: { ht: chargesHT, prorataQte },
-    facturerLoyer: true, // v1.0.4 — cases "Facturer loyer"/"Facturer charges", cochées par défaut
-    facturerCharges: true,
+    facturerLoyer: false, // v1.0.6 — décoché par défaut pour une nouvelle facture, à la demande de Marie
+    facturerCharges: false,
     prestaBase: { ttc: prestaBaseTTC, qte: 1, libelle: prestationBaseLabel, tarif: tarifPrestaBase },
     cotisationRestaurant: { ttc: cotisationRestaurantTTC, totalPourSeuilR, tarif: tarifCotisRest, logementNonOccupe },
     adhesionAnnuelle: { ttc: adhesionAnnuelleTTC, qte: qteAdhesion, tarif: tarifAdhesionAnnuelle },
@@ -2754,6 +2771,13 @@ async function reprendreFacture(factureId) {
       if (txt) txt.value = f.commentaires;
     }
 
+    // v1.0.6 — restaurer les cases "Facturer loyer"/"Facturer charges" (jamais restaurées jusqu'ici : bug
+    // corrigé au passage). Une facture SANS ce champ enregistré (antérieure à la fonctionnalité) reste
+    // facturée (true), comme elle l'a réellement été ; un décochage explicitement enregistré est respecté.
+    factLastCalc.facturerLoyer = (c.calc && c.calc.facturerLoyer === false) ? false : true;
+    factLastCalc.facturerCharges = (c.calc && c.calc.facturerCharges === false) ? false : true;
+    refreshTableDroite();
+
     factLastSavedKey = factLastKey;
     factLastSavedNumero = f.numero;
 
@@ -2793,7 +2817,7 @@ async function imprimerFacturesMois() {
     toast('Le navigateur a bloqué l\'ouverture de la fenêtre d\'impression — autorisez les popups pour ce site puis réessayez', 'error');
     return;
   }
-  w.document.write('<html><head><meta charset="utf-8"><title>Préparation…</title></head><body>Préparation des factures…</body></html>');
+  w.document.write('<html><head><meta charset="utf-8"><title>Préparation…</title></head><body>Préparation des factures… <span id="progress"></span></body></html>');
 
   let factures;
   try {
@@ -2807,9 +2831,18 @@ async function imprimerFacturesMois() {
   const d1 = `${a}-${String(m).padStart(2,'0')}-01`;
   const d2 = fmtDateISO(new Date(a, m, 0));
 
+  // v1.0.6 — active le cache Carte des prestations pour toute la durée de la génération (voir getTarifCarte) :
+  // la Carte d'une maison est partagée par tous ses résidents sur un mois donné, inutile de la retélécharger
+  // à chaque résident. Réinitialisé/désactivé systématiquement à la sortie (succès ou erreur).
+  tarifCarteCacheActive = true;
+  tarifCarteCache = {};
+
   let pagesHtml = '';
   try {
+    let i = 0;
     for (const f of factures) {
+      i++;
+      try { w.document.getElementById('progress').textContent = `(${i}/${factures.length})`; } catch(e) {}
       const c = f.contenu || {};
       const estVacant = !!f.appt_vacant || (c.resident && c.resident._vacant);
       let res;
@@ -2836,10 +2869,12 @@ async function imprimerFacturesMois() {
         calc.adhesionAnnuelle.ttc = calc.adhesionAnnuelle.tarif ? parseFloat(calc.adhesionAnnuelle.tarif.prix1) * c.qteAdhesion : 0;
       }
       if (c.puPrestaBase != null) calc.prestaBase.ttc = c.puPrestaBase;
-      // v1.0.4 — restaurer les cases "Facturer loyer"/"Facturer charges" telles qu'enregistrées (sinon calculSection3
-      // les remet à true par défaut, ignorant un éventuel décochage sauvegardé pour cette facture)
-      if (c.calc && c.calc.facturerLoyer === false) calc.facturerLoyer = false;
-      if (c.calc && c.calc.facturerCharges === false) calc.facturerCharges = false;
+      // v1.0.4 — restaurer les cases "Facturer loyer"/"Facturer charges" telles qu'enregistrées.
+      // v1.0.6 — le défaut d'une facture NEUVE est désormais décoché (calculSection3), mais une facture déjà
+      // enregistrée SANS ce champ (antérieure à la fonctionnalité, v1.0.3 et avant) doit rester facturée comme
+      // elle l'a réellement été (true) — seul un décochage explicitement enregistré (false) doit être respecté.
+      calc.facturerLoyer = (c.calc && c.calc.facturerLoyer === false) ? false : true;
+      calc.facturerCharges = (c.calc && c.calc.facturerCharges === false) ? false : true;
       factLignesLibres = c.lignesLibres || [];
 
       const carteHtml = await buildCarteExtraitHTML(res, mois);
@@ -2855,10 +2890,12 @@ async function imprimerFacturesMois() {
       pagesHtml += bodyMatch ? bodyMatch[1] : pageHtml;
     }
   } catch(e) {
+    tarifCarteCacheActive = false; tarifCarteCache = {};
     toast('Erreur lors de la génération des factures : '+e.message, 'error');
     w.close();
     return;
   }
+  tarifCarteCacheActive = false; tarifCarteCache = {};
 
   w.document.open();
   w.document.write(`<html><head><meta charset="utf-8"><title>Factures ${moisLabel}</title>
@@ -4928,20 +4965,35 @@ function buildSheetXML(titleRow, headers, rows, moneyCols) {
   // headers: array de libellés colonnes (juste après la/les ligne(s) de titre)
   // rows: array de arrays de valeurs (lignes suivantes)
   // moneyCols: Set (ou array) d'index de colonnes à formater avec 2 décimales fixes (style s="1")
+  //            — v1.0.6 : ces mêmes colonnes reçoivent aussi un total (formule SUM) sur la ligne de titre,
+  //            comme demandé par Marie (cf. son propre fichier annoté de formules =SUM(...) en ligne 1)
   const money = moneyCols instanceof Set ? moneyCols : new Set(moneyCols || []);
   const titres = Array.isArray(titleRow) ? titleRow : [titleRow];
   let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <sheetData>`;
 
-  // Ligne(s) 1..N : titre(s)
+  const headerRowNum = titres.length + 1;
+  const firstDataRow = headerRowNum + 1;
+  const lastDataRow = headerRowNum + rows.length;
+
+  // Ligne(s) 1..N : titre(s). Ligne 1 uniquement : totaux (SUM) pour chaque colonne monétaire.
   titres.forEach((t, i) => {
     const rowNum = i + 1;
-    xml += `<row r="${rowNum}"><c r="A${rowNum}" t="inlineStr" s="2"><is><t>${xmlEscape(t)}</t></is></c></row>`;
+    xml += `<row r="${rowNum}"><c r="A${rowNum}" t="inlineStr" s="2"><is><t>${xmlEscape(t)}</t></is></c>`;
+    if (i === 0 && rows.length > 0) {
+      money.forEach(cIdx => {
+        if (cIdx === 0) return; // colonne A déjà occupée par le titre
+        const col = colLetter(cIdx);
+        const total = rows.reduce((s, r) => s + (typeof r[cIdx] === 'number' ? r[cIdx] : 0), 0);
+        const totalArrondi = Math.round(total * 100) / 100;
+        xml += `<c r="${col}${rowNum}" s="1"><f>SUM(${col}${firstDataRow}:${col}${lastDataRow})</f><v>${totalArrondi}</v></c>`;
+      });
+    }
+    xml += `</row>`;
   });
 
   // Ligne suivante : headers
-  const headerRowNum = titres.length + 1;
   xml += `<row r="${headerRowNum}">`;
   headers.forEach((h, i) => {
     const col = colLetter(i);
@@ -5030,6 +5082,7 @@ ${contentTypesSheets}
   const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <sheets>${workbookSheets}</sheets>
+<calcPr calcId="0" fullCalcOnLoad="1"/>
 </workbook>`;
 
   // rId1..N = feuilles, rId{N+1} = styles.xml
@@ -5322,6 +5375,9 @@ async function exportFacturationXLSX() {
       addLibelle(mois, 'Plateau à emporter (repas + supplément)', montants.plateauEmporteHT||0, tvaRepas, totaux.totPlateauEmporte||0);
       addLibelle(mois, 'Potage (1L)', montants.potageHT||0, tvaRepas, totaux.totPotage||0);
       addLibelle(mois, 'Repas amélioré', montants.ameliorHT||0, tvaRepas, totaux.nbRepasAmeliore||0);
+      // v1.0.6 — correctif : Boisson manquait entièrement de cet onglet (présente dans Synthèse
+      // consommations et dans le total général, mais jamais ajoutée ici) — écart constaté par Marie.
+      addLibelle(mois, 'Boisson', totaux.totBoisson||0, tvaRepas, 0);
       // v1.0.4 — quantité de la Cotisation Restaurant déduite du montant facturé (seuilR n'est pas conservé dans la facture)
       const qteCotisation = (cotisationTTC && tarifs.prixN1) ? Math.round(cotisationTTC/tarifs.prixN1) : 0;
       addLibelle(mois, 'Cotisation Restaurant', cotisationTTC, tvaRepas, qteCotisation);
