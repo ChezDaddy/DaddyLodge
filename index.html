@@ -370,7 +370,7 @@
     </div>
     <button class="btn-login" onclick="doLogin()">Se connecter</button>
     <div class="login-error" id="login-error">Identifiant ou mot de passe incorrect.</div>
-    <div class="login-version">v1.0.7 — Août 2026</div>
+    <div class="login-version">v1.0.8 — Novembre 2026</div>
   </div>
 </div>
 
@@ -2395,7 +2395,9 @@ function buildTableGauche(repasMois, mois, calc, printMode) {
       ${tfootHTML}
     </table>
     ${printMode
-      ? `<div style="margin-top:6px;font-size:10px"><span style="color:#000">★</span> : repas amélioré</div>`
+      ? (((t.nbRepasAmeliore||0) > 0 || (factJoursAmeliore||[]).length > 0)
+          ? `<div style="margin-top:6px;font-size:12pt"><strong><span style="color:#000">★</span> Repas amélioré :</strong> Quantité : ${t.nbRepasAmeliore||0} ; Montant ${fmt2(calc.montants.ameliorHT||0)}€</div>`
+          : `<div style="margin-top:6px;font-size:10px"><span style="color:#000">★</span> : repas amélioré</div>`)
       : `
     <div style="margin-top:6px;font-size:10px;color:#8a5c00;display:flex;align-items:center;gap:5px">
       <span style="display:inline-block;width:12px;height:12px;background:#fdf0d8;border:1px solid #e59e00"></span>
